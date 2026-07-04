@@ -46,9 +46,3 @@ Open the tray menu settings and fill in:
 - API Key
 - Model name / 模型名
 - UI language / 界面语言
-
-## Release / 发布
-
-The `v*` tag workflow builds Windows and macOS release artifacts and uploads them to the GitHub Release.
-
-推送 `v*` tag 后，GitHub Actions 会构建 Windows 和 macOS 发布产物，并上传到 GitHub Release。
