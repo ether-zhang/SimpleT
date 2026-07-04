@@ -35,17 +35,14 @@ body {
   border-radius: 14px;
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  /* 初始位于下方且透明；加上 .show 后平滑滑入（Win11 快捷设置观感）*/
-  opacity: 0;
-  transform: translateY(30px);
-  transition:
-    opacity 0.24s ease-out,
-    transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
+  /* 初始整块位于窗口下方（不透明），加 .show 向上滑入、去 .show 向下滑出。
+     纯位移过渡——是“滑动”而非“淡入淡出”。*/
+  transform: translateY(110%);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 
 .card.show {
-  opacity: 1;
   transform: translateY(0);
 }
 

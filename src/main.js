@@ -30,13 +30,29 @@ function fillLangSelect(sel) {
   }
 }
 
-// 卡片从下方平滑滑入，贴近 Windows 11 快捷设置的上滑动画
+// 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
+const CLOSE_MS = 280;
+let hideTimer = null;
+
+// 卡片从下方滑入（打开）
 function slideIn() {
+  clearTimeout(hideTimer);
+  hideTimer = null;
   els.card.classList.remove("show");
   // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
   requestAnimationFrame(() =>
     requestAnimationFrame(() => els.card.classList.add("show"))
   );
+}
+
+// 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
+function slideOutThenHide() {
+  if (hideTimer) return; // 已在收起中
+  els.card.classList.remove("show");
+  hideTimer = setTimeout(() => {
+    hideTimer = null;
+    invoke("commit_hide");
+  }, CLOSE_MS + 40);
 }
 
 function showPage(page) {
@@ -159,9 +175,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   els.cfgSave.addEventListener("click", saveConfig);
   els.cfgBack.addEventListener("click", () => showPage("translate"));
 
-  // Esc 收起浮窗
+  // Esc 收起浮窗（带下滑动画）
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") invoke("hide_window");
+    if (e.key === "Escape") slideOutThenHide();
   });
 
   // 托盘唤起：切到对应页并播放上滑动画
@@ -169,8 +185,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     showPage(e.payload);
     slideIn();
   });
-  // 收起时把卡片复位到隐藏态，保证下次滑入干净、不闪现
-  listen("flyout-hide", () => els.card.classList.remove("show"));
+  // 后端请求收起（失焦 / 再次点击托盘 / 关闭）：播放下滑动画，结束后隐藏窗口
+  listen("flyout-hide", () => slideOutThenHide());
 
   // 初始停在翻译页（此时窗口隐藏、卡片未滑入）
   showPage("translate");

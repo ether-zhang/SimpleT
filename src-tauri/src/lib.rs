@@ -1,6 +1,4 @@
 use std::fs;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -8,13 +6,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition,
 };
-
-// Records when the flyout was last hidden by losing focus, so a tray click that
-// caused that blur can be told apart from a genuine "open me" click (toggle).
-#[derive(Default)]
-struct FlyoutState {
-    hidden_at: Mutex<Option<Instant>>,
-}
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate between {Language-A} and {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 
@@ -58,26 +49,21 @@ fn load_config(app: tauri::AppHandle) -> Config {
     read_config(&app)
 }
 
-// Hide the flyout and tell the webview to reset the card to its off-screen
-// state, so the next show animates in cleanly instead of flashing.
-fn hide_flyout(w: &tauri::WebviewWindow) {
-    let _ = w.emit("flyout-hide", ());
-    let _ = w.hide();
-}
-
-#[tauri::command]
-fn hide_window(app: tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        hide_flyout(&w);
-    }
-}
-
 #[tauri::command]
 fn save_config(app: tauri::AppHandle, config: Config) -> Result<(), String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(dir.join("config.json"), json).map_err(|e| e.to_string())
+}
+
+// Actually hide the OS window. The frontend calls this once the slide-down
+// animation has finished, so the retract is visible before the window vanishes.
+#[tauri::command]
+fn commit_hide(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
 }
 
 #[tauri::command]
@@ -168,11 +154,11 @@ fn position_flyout(w: &tauri::WebviewWindow) {
 
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        *app.state::<FlyoutState>().hidden_at.lock().unwrap() = None;
         position_flyout(&w);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        // Frontend slides the card up and focuses the input.
         let _ = w.emit("navigate", page);
     }
 }
@@ -180,12 +166,11 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(FlyoutState::default())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
             translate,
-            hide_window
+            commit_hide
         ])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
@@ -213,21 +198,11 @@ pub fn run() {
                         let Some(w) = app.get_webview_window("main") else {
                             return;
                         };
-                        let state = app.state::<FlyoutState>();
-                        // A tray click first steals focus, so an open flyout has
-                        // usually already hidden itself via the blur handler by now.
-                        let just_hidden = state
-                            .hidden_at
-                            .lock()
-                            .unwrap()
-                            .map(|t| t.elapsed() < Duration::from_millis(300))
-                            .unwrap_or(false);
+                        // The close animation keeps the window visible while it
+                        // slides down, so `is_visible` still reflects "open" here:
+                        // open -> ask the frontend to slide it out; closed -> show.
                         if w.is_visible().unwrap_or(false) {
-                            // Still visible (blur didn't fire) -> toggle closed.
-                            hide_flyout(&w);
-                        } else if just_hidden {
-                            // The blur that hid it came from this very click -> stay closed.
-                            *state.hidden_at.lock().unwrap() = None;
+                            let _ = w.emit("flyout-hide", ());
                         } else {
                             show_page(app, "translate");
                         }
@@ -237,17 +212,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            // Closing hides it to the tray instead of quitting.
+            // No title bar, but Alt+F4 etc. still request close: hide, don't quit.
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                let _ = window.emit("flyout-hide", ());
-                let _ = window.hide();
                 api.prevent_close();
-            }
-            // Flyout behaviour: dismiss when it loses focus (click away).
-            tauri::WindowEvent::Focused(false) => {
-                *window.state::<FlyoutState>().hidden_at.lock().unwrap() = Some(Instant::now());
                 let _ = window.emit("flyout-hide", ());
-                let _ = window.hide();
+            }
+            // Flyout behaviour: slide out when it loses focus (click away).
+            tauri::WindowEvent::Focused(false) => {
+                let _ = window.emit("flyout-hide", ());
             }
             _ => {}
         })
