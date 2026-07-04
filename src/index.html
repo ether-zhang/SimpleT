@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SimpleT</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <div class="card">
+    <!-- 翻译页 -->
+    <main id="page-translate" class="page">
+      <div class="langbar">
+        <select id="lang-a" class="lang-select"></select>
+        <button id="swap" class="swap" title="交换语言">⇄</button>
+        <select id="lang-b" class="lang-select"></select>
+      </div>
+
+      <div class="panes">
+        <textarea id="input" class="pane" placeholder="输入要翻译的内容…" spellcheck="false"></textarea>
+        <div class="middle">
+          <button id="translate-btn" class="translate-btn">翻译</button>
+          <button id="open-settings" class="secondary small">设置</button>
+        </div>
+        <textarea id="output" class="pane" placeholder="翻译结果" readonly spellcheck="false"></textarea>
+      </div>
+
+      <div id="status" class="status"></div>
+    </main>
+
+    <!-- 设置页 -->
+    <section id="page-settings" class="page hidden">
+      <h2>设置</h2>
+      <label>
+        <span>模型 URL（OpenAI 格式，以 /v1 结尾）</span>
+        <input id="cfg-url" type="text" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>
+        <span>API Key</span>
+        <input id="cfg-key" type="password" placeholder="sk-…" />
+      </label>
+      <label>
+        <span>模型名称</span>
+        <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+      </label>
+      <div class="settings-actions">
+        <button id="cfg-save" class="translate-btn">保存</button>
+        <button id="cfg-back" class="secondary">返回翻译</button>
+      </div>
+      <div id="cfg-status" class="status"></div>
+    </section>
+    </div>
+  </body>
+</html>
