@@ -30,18 +30,19 @@ function fillLangSelect(sel) {
   }
 }
 
-// 重新触发上浮动画：移除类 -> 强制回流 -> 重新加类
-function playFloat(el) {
-  el.classList.remove("floatin");
-  void el.offsetWidth;
-  el.classList.add("floatin");
+// 卡片从下方平滑滑入，贴近 Windows 11 快捷设置的上滑动画
+function slideIn() {
+  els.card.classList.remove("show");
+  // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => els.card.classList.add("show"))
+  );
 }
 
 function showPage(page) {
   const isSettings = page === "settings";
   els.pageTranslate.classList.toggle("hidden", isSettings);
   els.pageSettings.classList.toggle("hidden", !isSettings);
-  playFloat(isSettings ? els.pageSettings : els.pageTranslate);
   // 显示后立刻聚焦输入框，让中文输入法候选框贴着光标出现（修复其跑到左上角的问题）
   requestAnimationFrame(() => {
     (isSettings ? els.cfgUrl : els.input).focus();
@@ -108,6 +109,7 @@ async function persistLangs() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   els = {
+    card: document.querySelector(".card"),
     pageTranslate: document.querySelector("#page-translate"),
     pageSettings: document.querySelector("#page-settings"),
     langA: document.querySelector("#lang-a"),
@@ -162,9 +164,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (e.key === "Escape") invoke("hide_window");
   });
 
-  // 托盘触发的页面导航
-  listen("navigate", (e) => showPage(e.payload));
+  // 托盘唤起：切到对应页并播放上滑动画
+  listen("navigate", (e) => {
+    showPage(e.payload);
+    slideIn();
+  });
+  // 收起时把卡片复位到隐藏态，保证下次滑入干净、不闪现
+  listen("flyout-hide", () => els.card.classList.remove("show"));
 
-  // 初始进入翻译页（聚焦输入框 + 上浮动画）
+  // 初始停在翻译页（此时窗口隐藏、卡片未滑入）
   showPage("translate");
 });

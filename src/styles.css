@@ -35,6 +35,18 @@ body {
   border-radius: 14px;
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.3);
   overflow: hidden;
+  /* 初始位于下方且透明；加上 .show 后平滑滑入（Win11 快捷设置观感）*/
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity 0.24s ease-out,
+    transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+}
+
+.card.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .page {
@@ -197,21 +209,6 @@ body {
 }
 .secondary:hover {
   border-color: var(--accent);
-}
-
-/* ---- 上浮入场动画（点击托盘时播放）---- */
-@keyframes floatUp {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.floatin {
-  animation: floatUp 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* ---- 深色模式 ---- */
