@@ -178,7 +178,8 @@ body {
   font-size: 13px;
   color: var(--muted);
 }
-#page-settings input {
+#page-settings input,
+#page-settings select {
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -187,7 +188,8 @@ body {
   font-size: 14px;
   outline: none;
 }
-#page-settings input:focus {
+#page-settings input:focus,
+#page-settings select:focus {
   border-color: var(--accent);
 }
 .settings-actions {

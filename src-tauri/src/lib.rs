@@ -9,6 +9,10 @@ use tauri::{
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate between {Language-A} and {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 
+fn default_ui_lang() -> String {
+    "zh".into()
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     base_url: String,
@@ -16,6 +20,9 @@ struct Config {
     model: String,
     lang_a: String,
     lang_b: String,
+    // Added later; `serde(default)` keeps older config.json (without it) loadable.
+    #[serde(default = "default_ui_lang")]
+    ui_lang: String,
 }
 
 impl Default for Config {
@@ -26,6 +33,7 @@ impl Default for Config {
             model: "gpt-4o-mini".into(),
             lang_a: "Chinese".into(),
             lang_b: "English".into(),
+            ui_lang: default_ui_lang(),
         }
     }
 }
@@ -173,13 +181,25 @@ pub fn run() {
             commit_hide
         ])
         .setup(|app| {
-            let settings_i = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            // Localize the tray menu from the saved UI language.
+            let (settings_label, quit_label, tooltip) =
+                match read_config(app.handle()).ui_lang.as_str() {
+                    "en" => ("Settings", "Quit", "SimpleT Translate"),
+                    "ja" => ("設定", "終了", "SimpleT 翻訳"),
+                    "ko" => ("설정", "종료", "SimpleT 번역"),
+                    "fr" => ("Paramètres", "Quitter", "SimpleT Traduction"),
+                    "de" => ("Einstellungen", "Beenden", "SimpleT Übersetzung"),
+                    "es" => ("Ajustes", "Salir", "SimpleT Traducción"),
+                    "ru" => ("Настройки", "Выход", "SimpleT Перевод"),
+                    _ => ("设置", "退出", "SimpleT 翻译"),
+                };
+            let settings_i = MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &quit_i])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("SimpleT 翻译")
+                .tooltip(tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {

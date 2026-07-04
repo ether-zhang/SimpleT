@@ -32,18 +32,22 @@
 
     <!-- 设置页 -->
     <section id="page-settings" class="page hidden">
-      <h2>设置</h2>
+      <h2 id="settings-title">设置</h2>
       <label>
-        <span>模型 URL（OpenAI 格式，以 /v1 结尾）</span>
+        <span id="lbl-url">模型 URL（OpenAI 格式，以 /v1 结尾）</span>
         <input id="cfg-url" type="text" placeholder="https://api.openai.com/v1" />
       </label>
       <label>
-        <span>API Key</span>
+        <span id="lbl-key">API Key</span>
         <input id="cfg-key" type="password" placeholder="sk-…" />
       </label>
       <label>
-        <span>模型名称</span>
+        <span id="lbl-model">模型名称</span>
         <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+      </label>
+      <label>
+        <span id="lbl-uilang">界面语言</span>
+        <select id="cfg-ui-lang"></select>
       </label>
       <div class="settings-actions">
         <button id="cfg-save" class="translate-btn">保存</button>

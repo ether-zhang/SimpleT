@@ -1,31 +1,226 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-// value 会被写入 system prompt，用模型能理解的英文语言名；label 为界面显示
+// value 写入 system prompt（模型理解的英文名）；code 为 BCP-47，用于本地化显示名
 const LANGUAGES = [
-  { value: "Chinese", label: "中文 (Chinese)" },
-  { value: "English", label: "英语 (English)" },
-  { value: "Japanese", label: "日语 (Japanese)" },
-  { value: "Korean", label: "韩语 (Korean)" },
-  { value: "French", label: "法语 (French)" },
-  { value: "German", label: "德语 (German)" },
-  { value: "Spanish", label: "西班牙语 (Spanish)" },
-  { value: "Russian", label: "俄语 (Russian)" },
-  { value: "Italian", label: "意大利语 (Italian)" },
-  { value: "Portuguese", label: "葡萄牙语 (Portuguese)" },
-  { value: "Arabic", label: "阿拉伯语 (Arabic)" },
-  { value: "Thai", label: "泰语 (Thai)" },
-  { value: "Vietnamese", label: "越南语 (Vietnamese)" },
+  { value: "Chinese", code: "zh" },
+  { value: "English", code: "en" },
+  { value: "Japanese", code: "ja" },
+  { value: "Korean", code: "ko" },
+  { value: "French", code: "fr" },
+  { value: "German", code: "de" },
+  { value: "Spanish", code: "es" },
+  { value: "Russian", code: "ru" },
+  { value: "Italian", code: "it" },
+  { value: "Portuguese", code: "pt" },
+  { value: "Arabic", code: "ar" },
+  { value: "Thai", code: "th" },
+  { value: "Vietnamese", code: "vi" },
 ];
 
+// 界面语言文案。每项的 _name 是该语言的“母语名”，用于下拉显示。
+const I18N = {
+  zh: {
+    _name: "中文",
+    swapTitle: "交换语言",
+    inputPh: "输入要翻译的内容…",
+    outputPh: "翻译结果",
+    translate: "翻译",
+    settings: "设置",
+    settingsTitle: "设置",
+    urlLabel: "模型 URL（OpenAI 格式，以 /v1 结尾）",
+    keyLabel: "API Key",
+    modelLabel: "模型名称",
+    uiLangLabel: "界面语言",
+    save: "保存",
+    back: "返回翻译",
+    saved: "已保存 ✓",
+    translating: "翻译中…",
+  },
+  en: {
+    _name: "English",
+    swapTitle: "Swap languages",
+    inputPh: "Enter text to translate…",
+    outputPh: "Translation",
+    translate: "Translate",
+    settings: "Settings",
+    settingsTitle: "Settings",
+    urlLabel: "Model URL (OpenAI format, ends with /v1)",
+    keyLabel: "API Key",
+    modelLabel: "Model name",
+    uiLangLabel: "UI language",
+    save: "Save",
+    back: "Back",
+    saved: "Saved ✓",
+    translating: "Translating…",
+  },
+  ja: {
+    _name: "日本語",
+    swapTitle: "言語を入れ替え",
+    inputPh: "翻訳する内容を入力…",
+    outputPh: "翻訳結果",
+    translate: "翻訳",
+    settings: "設定",
+    settingsTitle: "設定",
+    urlLabel: "モデル URL（OpenAI 形式、/v1 で終わる）",
+    keyLabel: "API キー",
+    modelLabel: "モデル名",
+    uiLangLabel: "表示言語",
+    save: "保存",
+    back: "戻る",
+    saved: "保存しました ✓",
+    translating: "翻訳中…",
+  },
+  ko: {
+    _name: "한국어",
+    swapTitle: "언어 교환",
+    inputPh: "번역할 내용을 입력…",
+    outputPh: "번역 결과",
+    translate: "번역",
+    settings: "설정",
+    settingsTitle: "설정",
+    urlLabel: "모델 URL (OpenAI 형식, /v1로 끝남)",
+    keyLabel: "API 키",
+    modelLabel: "모델 이름",
+    uiLangLabel: "인터페이스 언어",
+    save: "저장",
+    back: "뒤로",
+    saved: "저장됨 ✓",
+    translating: "번역 중…",
+  },
+  fr: {
+    _name: "Français",
+    swapTitle: "Inverser les langues",
+    inputPh: "Saisir le texte à traduire…",
+    outputPh: "Traduction",
+    translate: "Traduire",
+    settings: "Paramètres",
+    settingsTitle: "Paramètres",
+    urlLabel: "URL du modèle (format OpenAI, se termine par /v1)",
+    keyLabel: "Clé API",
+    modelLabel: "Nom du modèle",
+    uiLangLabel: "Langue de l'interface",
+    save: "Enregistrer",
+    back: "Retour",
+    saved: "Enregistré ✓",
+    translating: "Traduction…",
+  },
+  de: {
+    _name: "Deutsch",
+    swapTitle: "Sprachen tauschen",
+    inputPh: "Zu übersetzenden Text eingeben…",
+    outputPh: "Übersetzung",
+    translate: "Übersetzen",
+    settings: "Einstellungen",
+    settingsTitle: "Einstellungen",
+    urlLabel: "Modell-URL (OpenAI-Format, endet mit /v1)",
+    keyLabel: "API-Schlüssel",
+    modelLabel: "Modellname",
+    uiLangLabel: "Anzeigesprache",
+    save: "Speichern",
+    back: "Zurück",
+    saved: "Gespeichert ✓",
+    translating: "Übersetzen…",
+  },
+  es: {
+    _name: "Español",
+    swapTitle: "Intercambiar idiomas",
+    inputPh: "Escribe el texto a traducir…",
+    outputPh: "Traducción",
+    translate: "Traducir",
+    settings: "Ajustes",
+    settingsTitle: "Ajustes",
+    urlLabel: "URL del modelo (formato OpenAI, termina en /v1)",
+    keyLabel: "Clave API",
+    modelLabel: "Nombre del modelo",
+    uiLangLabel: "Idioma de la interfaz",
+    save: "Guardar",
+    back: "Volver",
+    saved: "Guardado ✓",
+    translating: "Traduciendo…",
+  },
+  ru: {
+    _name: "Русский",
+    swapTitle: "Поменять языки",
+    inputPh: "Введите текст для перевода…",
+    outputPh: "Перевод",
+    translate: "Перевести",
+    settings: "Настройки",
+    settingsTitle: "Настройки",
+    urlLabel: "URL модели (формат OpenAI, оканчивается на /v1)",
+    keyLabel: "API-ключ",
+    modelLabel: "Название модели",
+    uiLangLabel: "Язык интерфейса",
+    save: "Сохранить",
+    back: "Назад",
+    saved: "Сохранено ✓",
+    translating: "Перевод…",
+  },
+};
+
+let currentLang = "zh";
 let els = {};
 
+function t(key) {
+  return (I18N[currentLang] || I18N.zh)[key];
+}
+
+// 按语言刷新所有界面文案
+function applyLocale(lang) {
+  currentLang = I18N[lang] ? lang : "zh";
+  document.documentElement.lang = currentLang;
+  els.swap.title = t("swapTitle");
+  els.input.placeholder = t("inputPh");
+  els.output.placeholder = t("outputPh");
+  els.translateBtn.textContent = t("translate");
+  els.openSettings.textContent = t("settings");
+  els.settingsTitle.textContent = t("settingsTitle");
+  els.lblUrl.textContent = t("urlLabel");
+  els.lblKey.textContent = t("keyLabel");
+  els.lblModel.textContent = t("modelLabel");
+  els.lblUiLang.textContent = t("uiLangLabel");
+  els.cfgSave.textContent = t("save");
+  els.cfgBack.textContent = t("back");
+  // A(B) 中的 A 随界面语言变化，需重建两个语种下拉（保留已选值）
+  fillLangSelect(els.langA);
+  fillLangSelect(els.langB);
+}
+
+// 某语言在指定区域设置下的显示名（失败则回退到代码本身）
+function displayName(inLocale, code) {
+  try {
+    return new Intl.DisplayNames([inLocale], { type: "language" }).of(code) || code;
+  } catch {
+    return code;
+  }
+}
+
+// 「当前界面语言译名 (该语言母语名)」，两者相同时只显示一个
+function langLabel(code) {
+  const a = displayName(currentLang, code);
+  const b = displayName(code, code);
+  return a === b ? a : `${a} (${b})`;
+}
+
 function fillLangSelect(sel) {
+  const prev = sel.value;
   sel.innerHTML = "";
   for (const l of LANGUAGES) {
     const o = document.createElement("option");
     o.value = l.value;
-    o.textContent = l.label;
+    o.textContent = langLabel(l.code);
+    sel.appendChild(o);
+  }
+  if (prev) sel.value = prev;
+}
+
+// UI 语言下拉：每项用该语言的母语名显示
+function fillUiLangSelect(sel) {
+  sel.innerHTML = "";
+  for (const [code, dict] of Object.entries(I18N)) {
+    const o = document.createElement("option");
+    o.value = code;
+    o.textContent = dict._name;
     sel.appendChild(o);
   }
 }
@@ -71,7 +266,7 @@ async function doTranslate() {
     els.output.value = "";
     return;
   }
-  els.status.textContent = "翻译中…";
+  els.status.textContent = t("translating");
   els.translateBtn.disabled = true;
   try {
     const result = await invoke("translate", {
@@ -96,6 +291,8 @@ async function loadConfigIntoUI() {
   els.cfgModel.value = cfg.model || "";
   els.langA.value = cfg.lang_a || "Chinese";
   els.langB.value = cfg.lang_b || "English";
+  els.cfgUiLang.value = cfg.ui_lang || "zh";
+  applyLocale(els.cfgUiLang.value);
 }
 
 async function saveConfig() {
@@ -105,14 +302,22 @@ async function saveConfig() {
     model: els.cfgModel.value.trim(),
     lang_a: els.langA.value,
     lang_b: els.langB.value,
+    ui_lang: els.cfgUiLang.value,
   };
   try {
     await invoke("save_config", { config });
-    els.cfgStatus.textContent = "已保存 ✓";
+    els.cfgStatus.textContent = t("saved");
     setTimeout(() => (els.cfgStatus.textContent = ""), 1500);
   } catch (e) {
     els.cfgStatus.textContent = String(e);
   }
+}
+
+// 界面语言切换后立即持久化
+async function persistUiLang() {
+  const cfg = await invoke("load_config");
+  cfg.ui_lang = els.cfgUiLang.value;
+  await invoke("save_config", { config: cfg });
 }
 
 // 语言切换后，把当前选择持久化，方便下次启动恢复
@@ -138,14 +343,21 @@ window.addEventListener("DOMContentLoaded", async () => {
     cfgUrl: document.querySelector("#cfg-url"),
     cfgKey: document.querySelector("#cfg-key"),
     cfgModel: document.querySelector("#cfg-model"),
+    cfgUiLang: document.querySelector("#cfg-ui-lang"),
     openSettings: document.querySelector("#open-settings"),
     cfgSave: document.querySelector("#cfg-save"),
     cfgBack: document.querySelector("#cfg-back"),
     cfgStatus: document.querySelector("#cfg-status"),
+    settingsTitle: document.querySelector("#settings-title"),
+    lblUrl: document.querySelector("#lbl-url"),
+    lblKey: document.querySelector("#lbl-key"),
+    lblModel: document.querySelector("#lbl-model"),
+    lblUiLang: document.querySelector("#lbl-uilang"),
   };
 
   fillLangSelect(els.langA);
   fillLangSelect(els.langB);
+  fillUiLangSelect(els.cfgUiLang);
   await loadConfigIntoUI();
 
   els.translateBtn.addEventListener("click", doTranslate);
@@ -174,6 +386,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   els.openSettings.addEventListener("click", () => showPage("settings"));
   els.cfgSave.addEventListener("click", saveConfig);
   els.cfgBack.addEventListener("click", () => showPage("translate"));
+
+  // 切换界面语言：立即刷新文案并持久化
+  els.cfgUiLang.addEventListener("change", async () => {
+    applyLocale(els.cfgUiLang.value);
+    await persistUiLang();
+  });
 
   // Esc 收起浮窗（带下滑动画）
   document.addEventListener("keydown", (e) => {
