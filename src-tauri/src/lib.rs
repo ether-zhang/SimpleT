@@ -1,4 +1,6 @@
 use std::fs;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -6,6 +8,13 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition,
 };
+
+// Records when the flyout was last hidden by losing focus, so a tray click that
+// caused that blur can be told apart from a genuine "open me" click (toggle).
+#[derive(Default)]
+struct FlyoutState {
+    hidden_at: Mutex<Option<Instant>>,
+}
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate between {Language-A} and {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 
@@ -49,10 +58,17 @@ fn load_config(app: tauri::AppHandle) -> Config {
     read_config(&app)
 }
 
+// Hide the flyout and tell the webview to reset the card to its off-screen
+// state, so the next show animates in cleanly instead of flashing.
+fn hide_flyout(w: &tauri::WebviewWindow) {
+    let _ = w.emit("flyout-hide", ());
+    let _ = w.hide();
+}
+
 #[tauri::command]
 fn hide_window(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
+        hide_flyout(&w);
     }
 }
 
@@ -152,6 +168,7 @@ fn position_flyout(w: &tauri::WebviewWindow) {
 
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
+        *app.state::<FlyoutState>().hidden_at.lock().unwrap() = None;
         position_flyout(&w);
         let _ = w.show();
         let _ = w.unminimize();
@@ -163,6 +180,7 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(FlyoutState::default())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
@@ -191,7 +209,28 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        show_page(&tray.app_handle().clone(), "translate");
+                        let app = tray.app_handle();
+                        let Some(w) = app.get_webview_window("main") else {
+                            return;
+                        };
+                        let state = app.state::<FlyoutState>();
+                        // A tray click first steals focus, so an open flyout has
+                        // usually already hidden itself via the blur handler by now.
+                        let just_hidden = state
+                            .hidden_at
+                            .lock()
+                            .unwrap()
+                            .map(|t| t.elapsed() < Duration::from_millis(300))
+                            .unwrap_or(false);
+                        if w.is_visible().unwrap_or(false) {
+                            // Still visible (blur didn't fire) -> toggle closed.
+                            hide_flyout(&w);
+                        } else if just_hidden {
+                            // The blur that hid it came from this very click -> stay closed.
+                            *state.hidden_at.lock().unwrap() = None;
+                        } else {
+                            show_page(app, "translate");
+                        }
                     }
                 })
                 .build(app)?;
@@ -200,11 +239,14 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             // Closing hides it to the tray instead of quitting.
             tauri::WindowEvent::CloseRequested { api, .. } => {
+                let _ = window.emit("flyout-hide", ());
                 let _ = window.hide();
                 api.prevent_close();
             }
             // Flyout behaviour: dismiss when it loses focus (click away).
             tauri::WindowEvent::Focused(false) => {
+                *window.state::<FlyoutState>().hidden_at.lock().unwrap() = Some(Instant::now());
+                let _ = window.emit("flyout-hide", ());
                 let _ = window.hide();
             }
             _ => {}
