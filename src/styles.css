@@ -35,19 +35,18 @@ body {
   border-radius: 14px;
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  /* 初始整块位于窗口下方（不透明），加 .show 向上滑入、去 .show 向下滑出。
-     纯位移过渡——是“滑动”而非“淡入淡出”。*/
-  transform: translateY(110%);
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
+  /* Reveal from the tray side without moving a transparent WebView layer. */
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: clip-path;
 }
 
 .card.from-top {
-  transform: translateY(-110%);
+  clip-path: inset(0 0 100% 0);
 }
 
 .card.from-bottom {
-  transform: translateY(110%);
+  clip-path: inset(100% 0 0 0);
 }
 
 .card.no-transition {
@@ -55,7 +54,7 @@ body {
 }
 
 .card.show {
-  transform: translateY(0);
+  clip-path: inset(0 0 0 0);
 }
 
 .page {
