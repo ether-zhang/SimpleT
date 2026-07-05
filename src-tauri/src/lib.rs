@@ -1,10 +1,10 @@
-use std::fs;
+use std::{fs, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, PhysicalPosition,
+    Emitter, Manager, PhysicalPosition, Rect,
 };
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate between {Language-A} and {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
@@ -23,6 +23,11 @@ struct Config {
     // Added later; `serde(default)` keeps older config.json (without it) loadable.
     #[serde(default = "default_ui_lang")]
     ui_lang: String,
+}
+
+#[derive(Default)]
+struct TrayGeometry {
+    last_rect: Mutex<Option<Rect>>,
 }
 
 impl Default for Config {
@@ -134,9 +139,105 @@ async fn translate(
     Ok(content)
 }
 
-// Anchor the window at the bottom-right, near the system tray, above the taskbar.
-// The window is a tray flyout, so it doesn't need arbitrary positions.
-fn position_flyout(w: &tauri::WebviewWindow) {
+fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::Monitor> {
+    if let Ok(monitors) = w.available_monitors() {
+        if let Some(monitor) = monitors.into_iter().find(|m| {
+            let pos = m.position();
+            let size = m.size();
+            let right = pos.x + size.width as i32;
+            let bottom = pos.y + size.height as i32;
+            x >= pos.x && x < right && y >= pos.y && y < bottom
+        }) {
+            return Some(monitor);
+        }
+    }
+
+    w.current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten())
+}
+
+fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
+    if min > max {
+        min
+    } else {
+        value.clamp(min, max)
+    }
+}
+
+fn tray_event_rect(event: &TrayIconEvent) -> Option<Rect> {
+    match event {
+        TrayIconEvent::Click { rect, .. }
+        | TrayIconEvent::DoubleClick { rect, .. }
+        | TrayIconEvent::Enter { rect, .. }
+        | TrayIconEvent::Move { rect, .. }
+        | TrayIconEvent::Leave { rect, .. } => Some(*rect),
+        _ => None,
+    }
+}
+
+fn save_tray_rect(app: &tauri::AppHandle, rect: Rect) {
+    if let Ok(mut last_rect) = app.state::<TrayGeometry>().last_rect.lock() {
+        *last_rect = Some(rect);
+    }
+}
+
+fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
+    app.state::<TrayGeometry>()
+        .last_rect
+        .lock()
+        .ok()
+        .and_then(|rect| *rect)
+}
+
+// Anchor the flyout to the tray/menu-bar icon when Tauri provides its rect.
+// Fall back to the old bottom-right position when that geometry is unavailable.
+fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) {
+    let win = match w.outer_size() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    if let Some(rect) = tray_rect {
+        let pos = rect.position.to_physical::<i32>(1.0);
+        let size = rect.size.to_physical::<u32>(1.0);
+        if size.width > 0 && size.height > 0 {
+            let anchor_center_x = pos.x + size.width as i32 / 2;
+            let anchor_center_y = pos.y + size.height as i32 / 2;
+
+            if let Some(monitor) = monitor_at_point(w, anchor_center_x, anchor_center_y) {
+                let work = monitor.work_area();
+                let margin = (8.0 * monitor.scale_factor()).round() as i32;
+                let win_w = win.width as i32;
+                let win_h = win.height as i32;
+                let work_left = work.position.x;
+                let work_top = work.position.y;
+                let work_right = work_left + work.size.width as i32;
+                let work_bottom = work_top + work.size.height as i32;
+                let anchor_top = pos.y;
+                let anchor_bottom = pos.y + size.height as i32;
+                let monitor_mid_y = monitor.position().y + monitor.size().height as i32 / 2;
+
+                let x = clamp_position(
+                    anchor_center_x - win_w / 2,
+                    work_left + margin,
+                    work_right - win_w - margin,
+                );
+                let preferred_y = if anchor_center_y <= monitor_mid_y {
+                    anchor_bottom + margin
+                } else {
+                    anchor_top - win_h - margin
+                };
+                let y =
+                    clamp_position(preferred_y, work_top + margin, work_bottom - win_h - margin);
+
+                let _ = w.set_position(PhysicalPosition::new(x, y));
+                return;
+            }
+        }
+    }
+
     let monitor = match w
         .current_monitor()
         .ok()
@@ -149,10 +250,6 @@ fn position_flyout(w: &tauri::WebviewWindow) {
     let m_pos = monitor.position();
     let m_size = monitor.size();
     let scale = monitor.scale_factor();
-    let win = match w.outer_size() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
     let margin = (12.0 * scale) as i32;
     let taskbar = (56.0 * scale) as i32;
     let x = (m_pos.x + m_size.width as i32 - win.width as i32 - margin).max(m_pos.x);
@@ -160,9 +257,9 @@ fn position_flyout(w: &tauri::WebviewWindow) {
     let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
-fn show_page(app: &tauri::AppHandle, page: &str) {
+fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
     if let Some(w) = app.get_webview_window("main") {
-        position_flyout(&w);
+        position_flyout(&w, tray_rect);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -181,6 +278,8 @@ pub fn run() {
             commit_hide
         ])
         .setup(|app| {
+            app.manage(TrayGeometry::default());
+
             // Localize the tray menu from the saved UI language.
             let (settings_label, quit_label, tooltip) =
                 match read_config(app.handle()).ui_lang.as_str() {
@@ -193,7 +292,8 @@ pub fn run() {
                     "ru" => ("Настройки", "Выход", "SimpleT Перевод"),
                     _ => ("设置", "退出", "SimpleT 翻译"),
                 };
-            let settings_i = MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
+            let settings_i =
+                MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &quit_i])?;
 
@@ -203,18 +303,23 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "settings" => show_page(app, "settings"),
+                    "settings" => show_page(app, "settings", last_tray_rect(app)),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
+                    let app = tray.app_handle();
+                    let rect = tray_event_rect(&event);
+                    if let Some(rect) = rect {
+                        save_tray_rect(app, rect);
+                    }
+
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
                         let Some(w) = app.get_webview_window("main") else {
                             return;
                         };
@@ -224,7 +329,7 @@ pub fn run() {
                         if w.is_visible().unwrap_or(false) {
                             let _ = w.emit("flyout-hide", ());
                         } else {
-                            show_page(app, "translate");
+                            show_page(app, "translate", rect);
                         }
                     }
                 })
