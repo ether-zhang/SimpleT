@@ -229,10 +229,17 @@ function fillUiLangSelect(sel) {
 const CLOSE_MS = 280;
 let hideTimer = null;
 
+function setFlyoutOrigin(origin) {
+  const fromTop = origin === "top";
+  els.card.classList.toggle("from-top", fromTop);
+  els.card.classList.toggle("from-bottom", !fromTop);
+}
+
 // 卡片从下方滑入（打开）
-function slideIn() {
+function slideIn(origin) {
   clearTimeout(hideTimer);
   hideTimer = null;
+  setFlyoutOrigin(origin);
   els.card.classList.remove("show");
   // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
   requestAnimationFrame(() =>
@@ -400,8 +407,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // 托盘唤起：切到对应页并播放上滑动画
   listen("navigate", (e) => {
-    showPage(e.payload);
-    slideIn();
+    const payload = e.payload;
+    const page = typeof payload === "string" ? payload : payload?.page;
+    const origin = typeof payload === "string" ? "bottom" : payload?.origin;
+    showPage(page || "translate");
+    slideIn(origin || "bottom");
   });
   // 后端请求收起（失焦 / 再次点击托盘 / 关闭）：播放下滑动画，结束后隐藏窗口
   listen("flyout-hide", () => slideOutThenHide());

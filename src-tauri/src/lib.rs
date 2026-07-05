@@ -30,6 +30,21 @@ struct TrayGeometry {
     last_rect: Mutex<Option<Rect>>,
 }
 
+#[derive(Clone, Copy)]
+enum FlyoutOrigin {
+    Top,
+    Bottom,
+}
+
+impl FlyoutOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            FlyoutOrigin::Top => "top",
+            FlyoutOrigin::Bottom => "bottom",
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -193,10 +208,10 @@ fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
 
 // Anchor the flyout to the tray/menu-bar icon when Tauri provides its rect.
 // Fall back to the old bottom-right position when that geometry is unavailable.
-fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) {
+fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutOrigin {
     let win = match w.outer_size() {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return FlyoutOrigin::Bottom,
     };
 
     if let Some(rect) = tray_rect {
@@ -218,22 +233,26 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) {
                 let anchor_top = pos.y;
                 let anchor_bottom = pos.y + size.height as i32;
                 let monitor_mid_y = monitor.position().y + monitor.size().height as i32 / 2;
+                let origin = if anchor_center_y <= monitor_mid_y {
+                    FlyoutOrigin::Top
+                } else {
+                    FlyoutOrigin::Bottom
+                };
 
                 let x = clamp_position(
                     anchor_center_x - win_w / 2,
                     work_left + margin,
                     work_right - win_w - margin,
                 );
-                let preferred_y = if anchor_center_y <= monitor_mid_y {
-                    anchor_bottom + margin
-                } else {
-                    anchor_top - win_h - margin
+                let preferred_y = match origin {
+                    FlyoutOrigin::Top => anchor_bottom + margin,
+                    FlyoutOrigin::Bottom => anchor_top - win_h - margin,
                 };
                 let y =
                     clamp_position(preferred_y, work_top + margin, work_bottom - win_h - margin);
 
                 let _ = w.set_position(PhysicalPosition::new(x, y));
-                return;
+                return origin;
             }
         }
     }
@@ -245,7 +264,7 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) {
         .or_else(|| w.primary_monitor().ok().flatten())
     {
         Some(m) => m,
-        None => return,
+        None => return FlyoutOrigin::Bottom,
     };
     let m_pos = monitor.position();
     let m_size = monitor.size();
@@ -255,16 +274,23 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) {
     let x = (m_pos.x + m_size.width as i32 - win.width as i32 - margin).max(m_pos.x);
     let y = (m_pos.y + m_size.height as i32 - win.height as i32 - taskbar).max(m_pos.y);
     let _ = w.set_position(PhysicalPosition::new(x, y));
+    FlyoutOrigin::Bottom
 }
 
 fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
     if let Some(w) = app.get_webview_window("main") {
-        position_flyout(&w, tray_rect);
+        let origin = position_flyout(&w, tray_rect);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
-        // Frontend slides the card up and focuses the input.
-        let _ = w.emit("navigate", page);
+        // The frontend uses this to pick the matching slide direction.
+        let _ = w.emit(
+            "navigate",
+            serde_json::json!({
+                "page": page,
+                "origin": origin.as_str(),
+            }),
+        );
     }
 }
 

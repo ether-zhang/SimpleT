@@ -42,6 +42,14 @@ body {
   will-change: transform;
 }
 
+.card.from-top {
+  transform: translateY(-110%);
+}
+
+.card.from-bottom {
+  transform: translateY(110%);
+}
+
 .card.show {
   transform: translateY(0);
 }
