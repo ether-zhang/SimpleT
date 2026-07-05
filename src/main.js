@@ -227,6 +227,7 @@ function fillUiLangSelect(sel) {
 
 // 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
 const CLOSE_MS = 280;
+const IS_MAC = /mac/i.test(`${navigator.platform} ${navigator.userAgent}`);
 let hideTimer = null;
 let openingUntil = 0;
 
@@ -260,6 +261,10 @@ function slideIn(origin) {
 function slideOutThenHide() {
   if (Date.now() < openingUntil) return;
   if (hideTimer) return; // 已在收起中
+  if (IS_MAC) {
+    invoke("commit_hide");
+    return;
+  }
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
     hideTimer = null;
