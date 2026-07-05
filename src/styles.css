@@ -50,6 +50,10 @@ body {
   transform: translateY(110%);
 }
 
+.card.no-transition {
+  transition: none;
+}
+
 .card.show {
   transform: translateY(0);
 }

@@ -228,6 +228,7 @@ function fillUiLangSelect(sel) {
 // 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
 const CLOSE_MS = 280;
 let hideTimer = null;
+let openingUntil = 0;
 
 function setFlyoutOrigin(origin) {
   const fromTop = origin === "top";
@@ -235,12 +236,20 @@ function setFlyoutOrigin(origin) {
   els.card.classList.toggle("from-bottom", !fromTop);
 }
 
+function prepareSlideIn(origin) {
+  els.card.classList.add("no-transition");
+  els.card.classList.remove("show");
+  setFlyoutOrigin(origin);
+  els.card.offsetHeight;
+  els.card.classList.remove("no-transition");
+}
+
 // 卡片从下方滑入（打开）
 function slideIn(origin) {
   clearTimeout(hideTimer);
   hideTimer = null;
-  setFlyoutOrigin(origin);
-  els.card.classList.remove("show");
+  openingUntil = Date.now() + CLOSE_MS + 120;
+  prepareSlideIn(origin);
   // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
   requestAnimationFrame(() =>
     requestAnimationFrame(() => els.card.classList.add("show"))
@@ -249,6 +258,7 @@ function slideIn(origin) {
 
 // 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
 function slideOutThenHide() {
+  if (Date.now() < openingUntil) return;
   if (hideTimer) return; // 已在收起中
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
