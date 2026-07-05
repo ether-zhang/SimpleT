@@ -280,8 +280,11 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
 fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
     if let Some(w) = app.get_webview_window("main") {
         let origin = position_flyout(&w, tray_rect);
+        #[cfg(target_os = "macos")]
+        let _ = w.set_visible_on_all_workspaces(true);
         let _ = w.show();
         let _ = w.unminimize();
+        #[cfg(not(target_os = "macos"))]
         let _ = w.set_focus();
         // The frontend uses this to pick the matching slide direction.
         let _ = w.emit(
@@ -305,6 +308,8 @@ pub fn run() {
         ])
         .setup(|app| {
             app.manage(TrayGeometry::default());
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             // Localize the tray menu from the saved UI language.
             let (settings_label, quit_label, tooltip) =
