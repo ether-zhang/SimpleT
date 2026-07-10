@@ -198,6 +198,14 @@ body {
   font-size: 14px;
   outline: none;
 }
+.key-row {
+  display: flex;
+  gap: 8px;
+}
+.key-row input {
+  flex: 1;
+  min-width: 0;
+}
 #page-settings input:focus,
 #page-settings select:focus {
   border-color: var(--accent);

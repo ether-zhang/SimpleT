@@ -32,6 +32,7 @@ const I18N = {
     keyLabel: "API Key",
     modelLabel: "模型名称",
     uiLangLabel: "界面语言",
+    clearKey: "清除",
     save: "保存",
     back: "返回翻译",
     saved: "已保存 ✓",
@@ -49,6 +50,7 @@ const I18N = {
     keyLabel: "API Key",
     modelLabel: "Model name",
     uiLangLabel: "UI language",
+    clearKey: "Clear",
     save: "Save",
     back: "Back",
     saved: "Saved ✓",
@@ -66,6 +68,7 @@ const I18N = {
     keyLabel: "API キー",
     modelLabel: "モデル名",
     uiLangLabel: "表示言語",
+    clearKey: "消去",
     save: "保存",
     back: "戻る",
     saved: "保存しました ✓",
@@ -83,6 +86,7 @@ const I18N = {
     keyLabel: "API 키",
     modelLabel: "모델 이름",
     uiLangLabel: "인터페이스 언어",
+    clearKey: "지우기",
     save: "저장",
     back: "뒤로",
     saved: "저장됨 ✓",
@@ -100,6 +104,7 @@ const I18N = {
     keyLabel: "Clé API",
     modelLabel: "Nom du modèle",
     uiLangLabel: "Langue de l'interface",
+    clearKey: "Effacer",
     save: "Enregistrer",
     back: "Retour",
     saved: "Enregistré ✓",
@@ -117,6 +122,7 @@ const I18N = {
     keyLabel: "API-Schlüssel",
     modelLabel: "Modellname",
     uiLangLabel: "Anzeigesprache",
+    clearKey: "Löschen",
     save: "Speichern",
     back: "Zurück",
     saved: "Gespeichert ✓",
@@ -134,6 +140,7 @@ const I18N = {
     keyLabel: "Clave API",
     modelLabel: "Nombre del modelo",
     uiLangLabel: "Idioma de la interfaz",
+    clearKey: "Borrar",
     save: "Guardar",
     back: "Volver",
     saved: "Guardado ✓",
@@ -151,6 +158,7 @@ const I18N = {
     keyLabel: "API-ключ",
     modelLabel: "Название модели",
     uiLangLabel: "Язык интерфейса",
+    clearKey: "Очистить",
     save: "Сохранить",
     back: "Назад",
     saved: "Сохранено ✓",
@@ -177,6 +185,7 @@ function applyLocale(lang) {
   els.settingsTitle.textContent = t("settingsTitle");
   els.lblUrl.textContent = t("urlLabel");
   els.lblKey.textContent = t("keyLabel");
+  els.cfgKeyClear.textContent = t("clearKey");
   els.lblModel.textContent = t("modelLabel");
   els.lblUiLang.textContent = t("uiLangLabel");
   els.cfgSave.textContent = t("save");
@@ -228,7 +237,23 @@ function fillUiLangSelect(sel) {
 // 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
 const CLOSE_MS = 280;
 let hideTimer = null;
-let openingUntil = 0;
+let firstOpenFrame = null;
+let secondOpenFrame = null;
+let translationInFlight = false;
+let apiKeyChanged = false;
+let apiKeyConfigured = false;
+
+function updateApiKeyUI() {
+  els.cfgKey.placeholder = apiKeyConfigured ? "••••••••" : "sk-…";
+  els.cfgKeyClear.classList.toggle("hidden", !apiKeyConfigured);
+}
+
+function cancelSlideInFrames() {
+  if (firstOpenFrame !== null) cancelAnimationFrame(firstOpenFrame);
+  if (secondOpenFrame !== null) cancelAnimationFrame(secondOpenFrame);
+  firstOpenFrame = null;
+  secondOpenFrame = null;
+}
 
 function setFlyoutOrigin(origin) {
   const fromTop = origin === "top";
@@ -248,22 +273,28 @@ function prepareSlideIn(origin) {
 function slideIn(origin) {
   clearTimeout(hideTimer);
   hideTimer = null;
-  openingUntil = Date.now() + CLOSE_MS + 120;
+  cancelSlideInFrames();
   prepareSlideIn(origin);
   // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => els.card.classList.add("show"))
-  );
+  firstOpenFrame = requestAnimationFrame(() => {
+    firstOpenFrame = null;
+    secondOpenFrame = requestAnimationFrame(() => {
+      secondOpenFrame = null;
+      els.card.classList.add("show");
+    });
+  });
 }
 
 // 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
 function slideOutThenHide() {
-  if (Date.now() < openingUntil) return;
   if (hideTimer) return; // 已在收起中
+  cancelSlideInFrames();
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
     hideTimer = null;
-    invoke("commit_hide");
+    invoke("commit_hide").catch((e) => {
+      els.status.textContent = String(e);
+    });
   }, CLOSE_MS + 40);
 }
 
@@ -278,11 +309,13 @@ function showPage(page) {
 }
 
 async function doTranslate() {
+  if (translationInFlight) return;
   const text = els.input.value;
   if (!text.trim()) {
     els.output.value = "";
     return;
   }
+  translationInFlight = true;
   els.status.textContent = t("translating");
   els.translateBtn.disabled = true;
   try {
@@ -297,6 +330,7 @@ async function doTranslate() {
     els.output.value = "";
     els.status.textContent = String(e);
   } finally {
+    translationInFlight = false;
     els.translateBtn.disabled = false;
   }
 }
@@ -304,7 +338,10 @@ async function doTranslate() {
 async function loadConfigIntoUI() {
   const cfg = await invoke("load_config");
   els.cfgUrl.value = cfg.base_url || "";
-  els.cfgKey.value = cfg.api_key || "";
+  apiKeyConfigured = Boolean(cfg.api_key_configured);
+  apiKeyChanged = false;
+  els.cfgKey.value = "";
+  updateApiKeyUI();
   els.cfgModel.value = cfg.model || "";
   els.langA.value = cfg.lang_a || "Chinese";
   els.langB.value = cfg.lang_b || "English";
@@ -315,7 +352,7 @@ async function loadConfigIntoUI() {
 async function saveConfig() {
   const config = {
     base_url: els.cfgUrl.value.trim(),
-    api_key: els.cfgKey.value.trim(),
+    api_key: apiKeyChanged ? els.cfgKey.value.trim() : null,
     model: els.cfgModel.value.trim(),
     lang_a: els.langA.value,
     lang_b: els.langB.value,
@@ -323,6 +360,12 @@ async function saveConfig() {
   };
   try {
     await invoke("save_config", { config });
+    if (apiKeyChanged) {
+      apiKeyConfigured = Boolean(config.api_key);
+      apiKeyChanged = false;
+      els.cfgKey.value = "";
+      updateApiKeyUI();
+    }
     els.cfgStatus.textContent = t("saved");
     setTimeout(() => (els.cfgStatus.textContent = ""), 1500);
   } catch (e) {
@@ -332,17 +375,23 @@ async function saveConfig() {
 
 // 界面语言切换后立即持久化
 async function persistUiLang() {
-  const cfg = await invoke("load_config");
-  cfg.ui_lang = els.cfgUiLang.value;
-  await invoke("save_config", { config: cfg });
+  try {
+    await invoke("save_ui_lang", { uiLang: els.cfgUiLang.value });
+  } catch (e) {
+    els.cfgStatus.textContent = String(e);
+  }
 }
 
 // 语言切换后，把当前选择持久化，方便下次启动恢复
 async function persistLangs() {
-  const cfg = await invoke("load_config");
-  cfg.lang_a = els.langA.value;
-  cfg.lang_b = els.langB.value;
-  await invoke("save_config", { config: cfg });
+  try {
+    await invoke("save_languages", {
+      langA: els.langA.value,
+      langB: els.langB.value,
+    });
+  } catch (e) {
+    els.status.textContent = String(e);
+  }
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -359,6 +408,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     status: document.querySelector("#status"),
     cfgUrl: document.querySelector("#cfg-url"),
     cfgKey: document.querySelector("#cfg-key"),
+    cfgKeyClear: document.querySelector("#cfg-key-clear"),
     cfgModel: document.querySelector("#cfg-model"),
     cfgUiLang: document.querySelector("#cfg-ui-lang"),
     openSettings: document.querySelector("#open-settings"),
@@ -375,9 +425,30 @@ window.addEventListener("DOMContentLoaded", async () => {
   fillLangSelect(els.langA);
   fillLangSelect(els.langB);
   fillUiLangSelect(els.cfgUiLang);
+
+  await Promise.all([
+    listen("navigate", (e) => {
+      const payload = e.payload;
+      const page = typeof payload === "string" ? payload : payload?.page;
+      const origin = typeof payload === "string" ? "bottom" : payload?.origin;
+      showPage(page || "translate");
+      slideIn(origin || "bottom");
+    }),
+    listen("flyout-hide", () => slideOutThenHide()),
+  ]);
+
   await loadConfigIntoUI();
 
   els.translateBtn.addEventListener("click", doTranslate);
+  els.cfgKey.addEventListener("input", () => {
+    apiKeyChanged = true;
+  });
+  els.cfgKeyClear.addEventListener("click", () => {
+    apiKeyConfigured = false;
+    apiKeyChanged = true;
+    els.cfgKey.value = "";
+    updateApiKeyUI();
+  });
   // Ctrl+Enter 快速翻译
   els.input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -414,17 +485,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") slideOutThenHide();
   });
-
-  // 托盘唤起：切到对应页并播放上滑动画
-  listen("navigate", (e) => {
-    const payload = e.payload;
-    const page = typeof payload === "string" ? payload : payload?.page;
-    const origin = typeof payload === "string" ? "bottom" : payload?.origin;
-    showPage(page || "translate");
-    slideIn(origin || "bottom");
-  });
-  // 后端请求收起（失焦 / 再次点击托盘 / 关闭）：播放下滑动画，结束后隐藏窗口
-  listen("flyout-hide", () => slideOutThenHide());
 
   // 初始停在翻译页（此时窗口隐藏、卡片未滑入）
   showPage("translate");
