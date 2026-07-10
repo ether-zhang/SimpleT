@@ -15,9 +15,6 @@ use tauri::{
     Emitter, Manager, PhysicalPosition, Rect,
 };
 
-#[cfg(target_os = "macos")]
-use tauri::LogicalPosition;
-
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -102,10 +99,28 @@ impl AppState {
 #[derive(Clone, Copy)]
 struct TrayAnchor {
     rect: Rect,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg(all(target_os = "macos", debug_assertions))]
     click_position: PhysicalPosition<f64>,
     #[cfg(target_os = "macos")]
-    macos_global_cursor: Option<(f64, f64)>,
+    macos_native: Option<MacosTrayAnchor>,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacosRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+struct MacosTrayAnchor {
+    event_window: MacosRect,
+    #[cfg(debug_assertions)]
+    screen: MacosRect,
+    visible_screen: MacosRect,
 }
 
 #[derive(Default)]
@@ -343,67 +358,112 @@ fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::M
 }
 
 #[cfg(target_os = "macos")]
-fn macos_global_cursor_position() -> Option<(f64, f64)> {
-    use core_graphics::{
-        event::CGEvent,
-        event_source::{CGEventSource, CGEventSourceStateID},
+fn macos_rect(rect: objc2_foundation::NSRect) -> MacosRect {
+    MacosRect {
+        x: rect.origin.x,
+        y: rect.origin.y,
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_anchor_from_window(window: &objc2_app_kit::NSWindow) -> Option<MacosTrayAnchor> {
+    let screen = window.screen()?;
+    Some(MacosTrayAnchor {
+        event_window: macos_rect(window.frame()),
+        #[cfg(debug_assertions)]
+        screen: macos_rect(screen.frame()),
+        visible_screen: macos_rect(screen.visibleFrame()),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_current_event_anchor() -> Option<MacosTrayAnchor> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApp;
+
+    let mtm = MainThreadMarker::new()?;
+    let event = NSApp(mtm).currentEvent()?;
+    let window = event.window(mtm)?;
+    macos_anchor_from_window(&window)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_status_item_anchor<R: tauri::Runtime>(
+    tray: &tauri::tray::TrayIcon<R>,
+) -> Option<MacosTrayAnchor> {
+    tray.with_inner_tray_icon(|inner| {
+        let mtm = objc2::MainThreadMarker::new()?;
+        let status_item = inner.ns_status_item()?;
+        let button = status_item.button(mtm)?;
+        let window = button.window()?;
+        macos_anchor_from_window(&window)
+    })
+    .ok()
+    .flatten()
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn macos_flyout_position(
+    visible_screen: MacosRect,
+    event_window: MacosRect,
+    flyout_width: f64,
+    flyout_height: f64,
+    margin: f64,
+) -> (f64, f64) {
+    let min_x = visible_screen.x + margin;
+    let max_x = visible_screen.x + visible_screen.width - flyout_width - margin;
+    let centered_x = event_window.x + event_window.width / 2.0 - flyout_width / 2.0;
+    let x = if min_x > max_x {
+        min_x
+    } else {
+        centered_x.clamp(min_x, max_x)
     };
 
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
-    let point = CGEvent::new(source).ok()?.location();
-    Some((point.x, point.y))
+    let min_y = visible_screen.y + margin;
+    let max_y = visible_screen.y + visible_screen.height - flyout_height - margin;
+    let y = if min_y > max_y { min_y } else { max_y };
+    (x, y)
 }
 
 #[cfg(target_os = "macos")]
 fn position_macos_flyout(
     w: &tauri::WebviewWindow,
-    window_size: tauri::PhysicalSize<u32>,
     tray_anchor: Option<TrayAnchor>,
 ) -> Option<FlyoutOrigin> {
-    // CGEventGetLocation and CGDisplayBounds use the same global Quartz
-    // coordinate system, so no per-monitor DPI conversion is required.
-    let (cursor_x, cursor_y) = tray_anchor
-        .and_then(|anchor| anchor.macos_global_cursor)
-        .or_else(macos_global_cursor_position)?;
-    let monitor = w.monitor_from_point(cursor_x, cursor_y).ok().flatten()?;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::NSPoint;
 
-    let target_scale = monitor.scale_factor();
-    if target_scale <= 0.0 {
-        return None;
-    }
-    let work = monitor.work_area();
-    let work_left = work.position.x as f64 / target_scale;
-    let work_top = work.position.y as f64 / target_scale;
-    let work_right = work_left + work.size.width as f64 / target_scale;
-    let current_scale = w.scale_factor().ok().filter(|scale| *scale > 0.0)?;
-    let window_size = window_size.to_logical::<f64>(current_scale);
+    let native = tray_anchor?.macos_native?;
+    let _mtm = MainThreadMarker::new()?;
+    let window_ptr = w.ns_window().ok()?;
+    // SAFETY: Tauri owns this NSWindow for the WebviewWindow lifetime. This
+    // function is guarded by MainThreadMarker and does not retain the pointer.
+    let window = unsafe { (window_ptr as *const NSWindow).as_ref()? };
+    let frame = window.frame();
     let margin = 8.0;
-    let min_x = work_left + margin;
-    let max_x = work_right - window_size.width - margin;
-    let x = if min_x > max_x {
-        min_x
-    } else {
-        (cursor_x - window_size.width / 2.0).clamp(min_x, max_x)
-    };
-    let y = work_top + margin;
+    let (x, y) = macos_flyout_position(
+        native.visible_screen,
+        native.event_window,
+        frame.size.width,
+        frame.size.height,
+        margin,
+    );
 
     #[cfg(debug_assertions)]
     eprintln!(
-        "SimpleT flyout: tray_click={:?} tray_rect={:?} quartz=({cursor_x:.1},{cursor_y:.1}) \
-         target=({},{} {}x{} @{target_scale:.2}) destination=({x:.1},{y:.1})",
+        "SimpleT flyout: tray_click={:?} tray_rect={:?} event_window={:?} \
+         screen={:?} visible={:?} destination=({x:.1},{y:.1})",
         tray_anchor.map(|anchor| anchor.click_position),
         tray_anchor.map(|anchor| anchor.rect),
-        monitor.position().x,
-        monitor.position().y,
-        monitor.size().width,
-        monitor.size().height,
+        native.event_window,
+        native.screen,
+        native.visible_screen,
     );
 
-    if let Err(error) = w.set_position(LogicalPosition::new(x, y)) {
-        #[cfg(debug_assertions)]
-        eprintln!("SimpleT flyout: failed to move window: {error}");
-        return None;
-    }
+    window.setFrameOrigin(NSPoint::new(x, y));
     Some(FlyoutOrigin::Top)
 }
 
@@ -415,18 +475,27 @@ fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
     }
 }
 
-fn tray_event_anchor(event: &TrayIconEvent) -> Option<TrayAnchor> {
+fn tray_event_anchor<R: tauri::Runtime>(
+    _tray: &tauri::tray::TrayIcon<R>,
+    event: &TrayIconEvent,
+) -> Option<TrayAnchor> {
     match event {
         TrayIconEvent::Click { position, rect, .. }
         | TrayIconEvent::DoubleClick { position, rect, .. }
         | TrayIconEvent::Enter { position, rect, .. }
         | TrayIconEvent::Move { position, rect, .. }
-        | TrayIconEvent::Leave { position, rect, .. } => Some(TrayAnchor {
-            rect: *rect,
-            click_position: *position,
-            #[cfg(target_os = "macos")]
-            macos_global_cursor: macos_global_cursor_position(),
-        }),
+        | TrayIconEvent::Leave { position, rect, .. } => {
+            #[cfg(not(all(target_os = "macos", debug_assertions)))]
+            let _ = position;
+            Some(TrayAnchor {
+                rect: *rect,
+                #[cfg(all(target_os = "macos", debug_assertions))]
+                click_position: *position,
+                #[cfg(target_os = "macos")]
+                macos_native: macos_current_event_anchor()
+                    .or_else(|| macos_status_item_anchor(_tray)),
+            })
+        }
         _ => None,
     }
 }
@@ -454,7 +523,7 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_anchor: Option<TrayAnchor>) ->
     };
 
     #[cfg(target_os = "macos")]
-    if let Some(origin) = position_macos_flyout(w, win, tray_anchor) {
+    if let Some(origin) = position_macos_flyout(w, tray_anchor) {
         return origin;
     }
 
@@ -530,9 +599,8 @@ fn show_page(app: &tauri::AppHandle, page: &str, tray_anchor: Option<TrayAnchor>
         #[cfg(target_os = "macos")]
         let origin = {
             let _ = w.set_visible_on_all_workspaces(true);
-            // Tao dispatches set_position asynchronously on macOS. Show the
-            // still-transparent window first so the queued move cannot be
-            // overwritten by makeKeyAndOrderFront on its previous screen.
+            // Show the still-transparent window first, then synchronously move
+            // its native NSWindow to the status item's screen.
             let _ = w.show();
             let _ = w.unminimize();
             position_flyout(&w, tray_anchor)
@@ -612,7 +680,7 @@ pub fn run() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
-                    let anchor = tray_event_anchor(&event);
+                    let anchor = tray_event_anchor(tray, &event);
                     if let Some(anchor) = anchor {
                         save_tray_anchor(app, anchor);
                     }
@@ -666,7 +734,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_config_update, extract_translation, Config, ConfigUpdate, FocusState};
+    use super::{
+        apply_config_update, extract_translation, macos_flyout_position, Config, ConfigUpdate,
+        FocusState, MacosRect,
+    };
     use serde_json::json;
 
     #[test]
@@ -746,5 +817,26 @@ mod tests {
         apply_config_update(&mut config, update);
 
         assert!(config.api_key.is_empty());
+    }
+
+    #[test]
+    fn mac_flyout_position_preserves_secondary_screen_offset() {
+        let visible_screen = MacosRect {
+            x: 1920.0,
+            y: 0.0,
+            width: 1440.0,
+            height: 875.0,
+        };
+        let status_item = MacosRect {
+            x: 3150.0,
+            y: 875.0,
+            width: 32.0,
+            height: 25.0,
+        };
+
+        assert_eq!(
+            macos_flyout_position(visible_screen, status_item, 420.0, 560.0, 8.0),
+            (2932.0, 307.0)
+        );
     }
 }
