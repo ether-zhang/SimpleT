@@ -15,6 +15,9 @@ use tauri::{
     Emitter, Manager, PhysicalPosition, Rect,
 };
 
+#[cfg(target_os = "macos")]
+use tauri::LogicalPosition;
+
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -330,6 +333,81 @@ fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::M
         .or_else(|| w.primary_monitor().ok().flatten())
 }
 
+#[cfg(any(test, target_os = "macos"))]
+fn monitor_contains_logical_point(
+    point_x: f64,
+    point_y: f64,
+    physical_x: i32,
+    physical_y: i32,
+    physical_width: u32,
+    physical_height: u32,
+    scale_factor: f64,
+) -> bool {
+    if scale_factor <= 0.0 {
+        return false;
+    }
+
+    let left = physical_x as f64 / scale_factor;
+    let top = physical_y as f64 / scale_factor;
+    let right = left + physical_width as f64 / scale_factor;
+    let bottom = top + physical_height as f64 / scale_factor;
+    point_x >= left && point_x < right && point_y >= top && point_y < bottom
+}
+
+#[cfg(target_os = "macos")]
+fn position_macos_flyout(
+    w: &tauri::WebviewWindow,
+    window_size: tauri::PhysicalSize<u32>,
+) -> Option<FlyoutOrigin> {
+    // Tao reports the global cursor using the primary monitor's scale, while
+    // each monitor geometry uses that monitor's own scale. Normalize both to
+    // logical desktop coordinates before choosing a display.
+    let primary_scale = w.primary_monitor().ok().flatten()?.scale_factor();
+    if primary_scale <= 0.0 {
+        return None;
+    }
+    let cursor = w.cursor_position().ok()?;
+    let cursor_x = cursor.x / primary_scale;
+    let cursor_y = cursor.y / primary_scale;
+
+    let monitor = w.available_monitors().ok()?.into_iter().find(|monitor| {
+        let position = monitor.position();
+        let size = monitor.size();
+        monitor_contains_logical_point(
+            cursor_x,
+            cursor_y,
+            position.x,
+            position.y,
+            size.width,
+            size.height,
+            monitor.scale_factor(),
+        )
+    })?;
+
+    let target_scale = monitor.scale_factor();
+    if target_scale <= 0.0 {
+        return None;
+    }
+    let work = monitor.work_area();
+    let work_left = work.position.x as f64 / target_scale;
+    let work_top = work.position.y as f64 / target_scale;
+    let work_right = work_left + work.size.width as f64 / target_scale;
+    let current_scale = w.scale_factor().ok().filter(|scale| *scale > 0.0)?;
+    let window_size = window_size.to_logical::<f64>(current_scale);
+    let margin = 8.0;
+    let min_x = work_left + margin;
+    let max_x = work_right - window_size.width - margin;
+    let x = if min_x > max_x {
+        min_x
+    } else {
+        (cursor_x - window_size.width / 2.0).clamp(min_x, max_x)
+    };
+    let y = work_top + margin;
+
+    w.set_position(LogicalPosition::new(x, y)).ok()?;
+    Some(FlyoutOrigin::Top)
+}
+
 fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
     if min > max {
         min
@@ -370,6 +448,11 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
         Ok(s) => s,
         Err(_) => return FlyoutOrigin::Bottom,
     };
+
+    #[cfg(target_os = "macos")]
+    if let Some(origin) = position_macos_flyout(w, win) {
+        return origin;
+    }
 
     if let Some(rect) = tray_rect {
         let pos = rect.position.to_physical::<i32>(1.0);
@@ -565,7 +648,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_config_update, extract_translation, Config, ConfigUpdate, FocusState};
+    use super::{
+        apply_config_update, extract_translation, monitor_contains_logical_point, Config,
+        ConfigUpdate, FocusState,
+    };
     use serde_json::json;
 
     #[test]
@@ -645,5 +731,21 @@ mod tests {
         apply_config_update(&mut config, update);
 
         assert!(config.api_key.is_empty());
+    }
+
+    #[test]
+    fn logical_monitor_hit_test_handles_mixed_dpi_overlap() {
+        // A 2x Retina primary display is 1512 logical pixels wide. Tao reports
+        // its physical width as 3024, which overlaps the 1x external display's
+        // physical origin at x=1512 if compared without normalization.
+        let cursor_x = 1800.0;
+        let cursor_y = 20.0;
+
+        assert!(!monitor_contains_logical_point(
+            cursor_x, cursor_y, 0, 0, 3024, 1964, 2.0,
+        ));
+        assert!(monitor_contains_logical_point(
+            cursor_x, cursor_y, 1512, 0, 1920, 1080, 1.0,
+        ));
     }
 }
