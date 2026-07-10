@@ -84,7 +84,7 @@ fn apply_config_update(current: &mut Config, update: ConfigUpdate) {
 
 #[derive(Default)]
 struct AppState {
-    last_rect: Mutex<Option<Rect>>,
+    last_tray_anchor: Mutex<Option<TrayAnchor>>,
     config: Mutex<Config>,
     focus: Mutex<FocusState>,
 }
@@ -92,11 +92,20 @@ struct AppState {
 impl AppState {
     fn new(config: Config) -> Self {
         Self {
-            last_rect: Mutex::new(None),
+            last_tray_anchor: Mutex::new(None),
             config: Mutex::new(config),
             focus: Mutex::new(FocusState::default()),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct TrayAnchor {
+    rect: Rect,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    click_position: PhysicalPosition<f64>,
+    #[cfg(target_os = "macos")]
+    macos_global_cursor: Option<(f64, f64)>,
 }
 
 #[derive(Default)]
@@ -333,32 +342,29 @@ fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::M
         .or_else(|| w.primary_monitor().ok().flatten())
 }
 
-#[cfg(any(test, target_os = "macos"))]
-fn primary_scaled_to_logical(point_x: f64, point_y: f64, scale_factor: f64) -> Option<(f64, f64)> {
-    if scale_factor <= 0.0 {
-        return None;
-    }
-    Some((point_x / scale_factor, point_y / scale_factor))
+#[cfg(target_os = "macos")]
+fn macos_global_cursor_position() -> Option<(f64, f64)> {
+    use core_graphics::{
+        event::CGEvent,
+        event_source::{CGEventSource, CGEventSourceStateID},
+    };
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let point = CGEvent::new(source).ok()?.location();
+    Some((point.x, point.y))
 }
 
 #[cfg(target_os = "macos")]
 fn position_macos_flyout(
     w: &tauri::WebviewWindow,
     window_size: tauri::PhysicalSize<u32>,
+    tray_anchor: Option<TrayAnchor>,
 ) -> Option<FlyoutOrigin> {
-    // Tao reports the global cursor using the primary monitor's scale, while
-    // each monitor geometry uses that monitor's own scale. Normalize both to
-    // logical desktop coordinates before choosing a display.
-    let primary_scale = w.primary_monitor().ok().flatten()?.scale_factor();
-    if primary_scale <= 0.0 {
-        return None;
-    }
-    let cursor = w.cursor_position().ok()?;
-    let (cursor_x, cursor_y) = primary_scaled_to_logical(cursor.x, cursor.y, primary_scale)?;
-
-    // On macOS Tao's monitor_from_point expects Core Graphics logical desktop
-    // coordinates. Let it resolve NSScreen ownership instead of comparing the
-    // overlapping per-monitor physical rectangles ourselves.
+    // CGEventGetLocation and CGDisplayBounds use the same global Quartz
+    // coordinate system, so no per-monitor DPI conversion is required.
+    let (cursor_x, cursor_y) = tray_anchor
+        .and_then(|anchor| anchor.macos_global_cursor)
+        .or_else(macos_global_cursor_position)?;
     let monitor = w.monitor_from_point(cursor_x, cursor_y).ok().flatten()?;
 
     let target_scale = monitor.scale_factor();
@@ -383,8 +389,10 @@ fn position_macos_flyout(
 
     #[cfg(debug_assertions)]
     eprintln!(
-        "SimpleT flyout: cursor=({cursor_x:.1},{cursor_y:.1}) primary_scale={primary_scale:.2} \
+        "SimpleT flyout: tray_click={:?} tray_rect={:?} quartz=({cursor_x:.1},{cursor_y:.1}) \
          target=({},{} {}x{} @{target_scale:.2}) destination=({x:.1},{y:.1})",
+        tray_anchor.map(|anchor| anchor.click_position),
+        tray_anchor.map(|anchor| anchor.rect),
         monitor.position().x,
         monitor.position().y,
         monitor.size().width,
@@ -407,45 +415,50 @@ fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
     }
 }
 
-fn tray_event_rect(event: &TrayIconEvent) -> Option<Rect> {
+fn tray_event_anchor(event: &TrayIconEvent) -> Option<TrayAnchor> {
     match event {
-        TrayIconEvent::Click { rect, .. }
-        | TrayIconEvent::DoubleClick { rect, .. }
-        | TrayIconEvent::Enter { rect, .. }
-        | TrayIconEvent::Move { rect, .. }
-        | TrayIconEvent::Leave { rect, .. } => Some(*rect),
+        TrayIconEvent::Click { position, rect, .. }
+        | TrayIconEvent::DoubleClick { position, rect, .. }
+        | TrayIconEvent::Enter { position, rect, .. }
+        | TrayIconEvent::Move { position, rect, .. }
+        | TrayIconEvent::Leave { position, rect, .. } => Some(TrayAnchor {
+            rect: *rect,
+            click_position: *position,
+            #[cfg(target_os = "macos")]
+            macos_global_cursor: macos_global_cursor_position(),
+        }),
         _ => None,
     }
 }
 
-fn save_tray_rect(app: &tauri::AppHandle, rect: Rect) {
-    if let Ok(mut last_rect) = app.state::<AppState>().last_rect.lock() {
-        *last_rect = Some(rect);
+fn save_tray_anchor(app: &tauri::AppHandle, anchor: TrayAnchor) {
+    if let Ok(mut last_anchor) = app.state::<AppState>().last_tray_anchor.lock() {
+        *last_anchor = Some(anchor);
     }
 }
 
-fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
+fn last_tray_anchor(app: &tauri::AppHandle) -> Option<TrayAnchor> {
     app.state::<AppState>()
-        .last_rect
+        .last_tray_anchor
         .lock()
         .ok()
-        .and_then(|rect| *rect)
+        .and_then(|anchor| *anchor)
 }
 
 // Anchor the flyout to the tray/menu-bar icon when Tauri provides its rect.
 // Fall back to the old bottom-right position when that geometry is unavailable.
-fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutOrigin {
+fn position_flyout(w: &tauri::WebviewWindow, tray_anchor: Option<TrayAnchor>) -> FlyoutOrigin {
     let win = match w.outer_size() {
         Ok(s) => s,
         Err(_) => return FlyoutOrigin::Bottom,
     };
 
     #[cfg(target_os = "macos")]
-    if let Some(origin) = position_macos_flyout(w, win) {
+    if let Some(origin) = position_macos_flyout(w, win, tray_anchor) {
         return origin;
     }
 
-    if let Some(rect) = tray_rect {
+    if let Some(rect) = tray_anchor.map(|anchor| anchor.rect) {
         let pos = rect.position.to_physical::<i32>(1.0);
         let size = rect.size.to_physical::<u32>(1.0);
         if size.width > 0 && size.height > 0 {
@@ -508,7 +521,7 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
     FlyoutOrigin::Bottom
 }
 
-fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
+fn show_page(app: &tauri::AppHandle, page: &str, tray_anchor: Option<TrayAnchor>) {
     if let Some(w) = app.get_webview_window("main") {
         if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
             focus.prepare_show();
@@ -522,12 +535,12 @@ fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
             // overwritten by makeKeyAndOrderFront on its previous screen.
             let _ = w.show();
             let _ = w.unminimize();
-            position_flyout(&w, tray_rect)
+            position_flyout(&w, tray_anchor)
         };
 
         #[cfg(not(target_os = "macos"))]
         let origin = {
-            let origin = position_flyout(&w, tray_rect);
+            let origin = position_flyout(&w, tray_anchor);
             let _ = w.show();
             let _ = w.unminimize();
             let _ = w.set_focus();
@@ -592,16 +605,16 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "translate" => show_page(app, "translate", last_tray_rect(app)),
-                    "settings" => show_page(app, "settings", last_tray_rect(app)),
+                    "translate" => show_page(app, "translate", last_tray_anchor(app)),
+                    "settings" => show_page(app, "settings", last_tray_anchor(app)),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
-                    let rect = tray_event_rect(&event);
-                    if let Some(rect) = rect {
-                        save_tray_rect(app, rect);
+                    let anchor = tray_event_anchor(&event);
+                    if let Some(anchor) = anchor {
+                        save_tray_anchor(app, anchor);
                     }
 
                     if let TrayIconEvent::Click {
@@ -619,7 +632,7 @@ pub fn run() {
                         if w.is_visible().unwrap_or(false) {
                             let _ = w.emit("flyout-hide", ());
                         } else {
-                            show_page(app, "translate", rect);
+                            show_page(app, "translate", anchor);
                         }
                     }
                 })
@@ -653,10 +666,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_config_update, extract_translation, primary_scaled_to_logical, Config, ConfigUpdate,
-        FocusState,
-    };
+    use super::{apply_config_update, extract_translation, Config, ConfigUpdate, FocusState};
     use serde_json::json;
 
     #[test]
@@ -736,14 +746,5 @@ mod tests {
         apply_config_update(&mut config, update);
 
         assert!(config.api_key.is_empty());
-    }
-
-    #[test]
-    fn mac_cursor_position_is_normalized_with_primary_scale() {
-        assert_eq!(
-            primary_scaled_to_logical(3600.0, 40.0, 2.0),
-            Some((1800.0, 20.0))
-        );
-        assert_eq!(primary_scaled_to_logical(1.0, 1.0, 0.0), None);
     }
 }
