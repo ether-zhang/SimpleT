@@ -334,24 +334,11 @@ fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::M
 }
 
 #[cfg(any(test, target_os = "macos"))]
-fn monitor_contains_logical_point(
-    point_x: f64,
-    point_y: f64,
-    physical_x: i32,
-    physical_y: i32,
-    physical_width: u32,
-    physical_height: u32,
-    scale_factor: f64,
-) -> bool {
+fn primary_scaled_to_logical(point_x: f64, point_y: f64, scale_factor: f64) -> Option<(f64, f64)> {
     if scale_factor <= 0.0 {
-        return false;
+        return None;
     }
-
-    let left = physical_x as f64 / scale_factor;
-    let top = physical_y as f64 / scale_factor;
-    let right = left + physical_width as f64 / scale_factor;
-    let bottom = top + physical_height as f64 / scale_factor;
-    point_x >= left && point_x < right && point_y >= top && point_y < bottom
+    Some((point_x / scale_factor, point_y / scale_factor))
 }
 
 #[cfg(target_os = "macos")]
@@ -367,22 +354,12 @@ fn position_macos_flyout(
         return None;
     }
     let cursor = w.cursor_position().ok()?;
-    let cursor_x = cursor.x / primary_scale;
-    let cursor_y = cursor.y / primary_scale;
+    let (cursor_x, cursor_y) = primary_scaled_to_logical(cursor.x, cursor.y, primary_scale)?;
 
-    let monitor = w.available_monitors().ok()?.into_iter().find(|monitor| {
-        let position = monitor.position();
-        let size = monitor.size();
-        monitor_contains_logical_point(
-            cursor_x,
-            cursor_y,
-            position.x,
-            position.y,
-            size.width,
-            size.height,
-            monitor.scale_factor(),
-        )
-    })?;
+    // On macOS Tao's monitor_from_point expects Core Graphics logical desktop
+    // coordinates. Let it resolve NSScreen ownership instead of comparing the
+    // overlapping per-monitor physical rectangles ourselves.
+    let monitor = w.monitor_from_point(cursor_x, cursor_y).ok().flatten()?;
 
     let target_scale = monitor.scale_factor();
     if target_scale <= 0.0 {
@@ -404,7 +381,21 @@ fn position_macos_flyout(
     };
     let y = work_top + margin;
 
-    w.set_position(LogicalPosition::new(x, y)).ok()?;
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "SimpleT flyout: cursor=({cursor_x:.1},{cursor_y:.1}) primary_scale={primary_scale:.2} \
+         target=({},{} {}x{} @{target_scale:.2}) destination=({x:.1},{y:.1})",
+        monitor.position().x,
+        monitor.position().y,
+        monitor.size().width,
+        monitor.size().height,
+    );
+
+    if let Err(error) = w.set_position(LogicalPosition::new(x, y)) {
+        #[cfg(debug_assertions)]
+        eprintln!("SimpleT flyout: failed to move window: {error}");
+        return None;
+    }
     Some(FlyoutOrigin::Top)
 }
 
@@ -522,13 +513,27 @@ fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
         if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
             focus.prepare_show();
         }
-        let origin = position_flyout(&w, tray_rect);
+
         #[cfg(target_os = "macos")]
-        let _ = w.set_visible_on_all_workspaces(true);
-        let _ = w.show();
-        let _ = w.unminimize();
+        let origin = {
+            let _ = w.set_visible_on_all_workspaces(true);
+            // Tao dispatches set_position asynchronously on macOS. Show the
+            // still-transparent window first so the queued move cannot be
+            // overwritten by makeKeyAndOrderFront on its previous screen.
+            let _ = w.show();
+            let _ = w.unminimize();
+            position_flyout(&w, tray_rect)
+        };
+
         #[cfg(not(target_os = "macos"))]
-        let _ = w.set_focus();
+        let origin = {
+            let origin = position_flyout(&w, tray_rect);
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+            origin
+        };
+
         // The frontend uses this to pick the matching slide direction.
         let _ = w.emit(
             "navigate",
@@ -649,8 +654,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_config_update, extract_translation, monitor_contains_logical_point, Config,
-        ConfigUpdate, FocusState,
+        apply_config_update, extract_translation, primary_scaled_to_logical, Config, ConfigUpdate,
+        FocusState,
     };
     use serde_json::json;
 
@@ -734,18 +739,11 @@ mod tests {
     }
 
     #[test]
-    fn logical_monitor_hit_test_handles_mixed_dpi_overlap() {
-        // A 2x Retina primary display is 1512 logical pixels wide. Tao reports
-        // its physical width as 3024, which overlaps the 1x external display's
-        // physical origin at x=1512 if compared without normalization.
-        let cursor_x = 1800.0;
-        let cursor_y = 20.0;
-
-        assert!(!monitor_contains_logical_point(
-            cursor_x, cursor_y, 0, 0, 3024, 1964, 2.0,
-        ));
-        assert!(monitor_contains_logical_point(
-            cursor_x, cursor_y, 1512, 0, 1920, 1080, 1.0,
-        ));
+    fn mac_cursor_position_is_normalized_with_primary_scale() {
+        assert_eq!(
+            primary_scaled_to_logical(3600.0, 40.0, 2.0),
+            Some((1800.0, 20.0))
+        );
+        assert_eq!(primary_scaled_to_logical(1.0, 1.0, 0.0), None);
     }
 }
