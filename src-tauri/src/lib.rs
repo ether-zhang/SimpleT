@@ -683,7 +683,9 @@ use flyout_panel::FlyoutPanel;
 // move-to-active-space", so tuning one no longer breaks the other.
 #[cfg(target_os = "macos")]
 fn to_flyout_panel(w: &tauri::WebviewWindow) -> Option<tauri_nspanel::PanelHandle<tauri::Wry>> {
-    if let Ok(panel) = w.app_handle().get_webview_panel("main") {
+    // WebviewWindow implements Manager, so ManagerExt::get_webview_panel works
+    // directly on it — returns Ok only once the window is already a panel.
+    if let Ok(panel) = w.get_webview_panel("main") {
         return Some(panel);
     }
     let panel = w.to_panel::<FlyoutPanel<tauri::Wry>>().ok()?;
