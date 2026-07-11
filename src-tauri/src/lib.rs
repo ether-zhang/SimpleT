@@ -479,16 +479,30 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             // is non-key, but macOS only attaches the full text-input context
             // (including IME candidate UI) to the key window.
             let popover = app.ns_popover();
-            if let Some(controller) = popover.contentViewController() {
-                if let Some(popover_window) = controller.view().window() {
-                    popover_window.makeKeyWindow();
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "SimpleT popover focus: app_active={} window_key={}",
-                        native_app.isActive(),
-                        popover_window.isKeyWindow()
-                    );
-                }
+            let popover_window = popover
+                .contentViewController()
+                .and_then(|controller| controller.view().window());
+            if let Some(popover_window) = popover_window.as_deref() {
+                popover_window.makeKeyWindow();
+            }
+
+            // `WebviewWindow::set_focus` targets the original Tauri NSWindow,
+            // whose content was replaced by the popover plugin. Focus the
+            // Webview itself so WRY makes the WKWebView first responder in its
+            // current (popover) window.
+            if let Err(error) = w.as_ref().set_focus() {
+                #[cfg(debug_assertions)]
+                eprintln!("SimpleT popover focus: failed to focus WKWebView: {error}");
+            }
+
+            #[cfg(debug_assertions)]
+            if let Some(popover_window) = popover_window.as_deref() {
+                eprintln!(
+                    "SimpleT popover focus: app_active={} window_key={} first_responder={:?}",
+                    native_app.isActive(),
+                    popover_window.isKeyWindow(),
+                    popover_window.firstResponder()
+                );
             }
 
             // Emit after the popover is key so the frontend's focus() call
