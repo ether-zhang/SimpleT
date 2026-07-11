@@ -19,6 +19,10 @@ use tauri::{
 use tauri::{PhysicalPosition, Rect};
 
 #[cfg(target_os = "macos")]
+use objc2_app_kit::NSApplication;
+#[cfg(target_os = "macos")]
+use objc2_foundation::MainThreadMarker;
+#[cfg(target_os = "macos")]
 use tauri_plugin_nspopover::{AppExt, ToPopoverOptions, WindowExt};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
@@ -472,6 +476,14 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                 }),
             );
             app.show_popover();
+            // A status-item click does not activate an Accessory app. WebKit can
+            // still accept keystrokes, but macOS will not present IME candidate
+            // UI until the application owns the active text-input context.
+            let native_app = NSApplication::sharedApplication(
+                MainThreadMarker::new().expect("tray events run on the main thread"),
+            );
+            #[allow(deprecated)]
+            native_app.activateIgnoringOtherApps(true);
         }
 
         #[cfg(not(target_os = "macos"))]
