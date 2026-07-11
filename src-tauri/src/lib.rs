@@ -19,11 +19,9 @@ use tauri::{
 use tauri::{PhysicalPosition, Rect};
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::NSApplication;
+use objc2_app_kit::{NSApplication, NSWindow};
 #[cfg(target_os = "macos")]
-use objc2_foundation::MainThreadMarker;
-#[cfg(target_os = "macos")]
-use tauri_plugin_nspopover::{AppExt, ToPopoverOptions, WindowExt};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSRect};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -94,7 +92,6 @@ struct AppState {
     #[cfg(not(target_os = "macos"))]
     last_rect: Mutex<Option<Rect>>,
     config: Mutex<Config>,
-    #[cfg(not(target_os = "macos"))]
     focus: Mutex<FocusState>,
 }
 
@@ -104,19 +101,16 @@ impl AppState {
             #[cfg(not(target_os = "macos"))]
             last_rect: Mutex::new(None),
             config: Mutex::new(config),
-            #[cfg(not(target_os = "macos"))]
             focus: Mutex::new(FocusState::default()),
         }
     }
 }
 
-#[cfg(any(test, not(target_os = "macos")))]
 #[derive(Default)]
 struct FocusState {
     focused_since_show: bool,
 }
 
-#[cfg(any(test, not(target_os = "macos")))]
 impl FocusState {
     fn prepare_show(&mut self) {
         self.focused_since_show = false;
@@ -251,17 +245,11 @@ fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Resu
 // animation has finished, so the retract is visible before the window vanishes.
 #[tauri::command]
 fn commit_hide(app: tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
-    app.hide_popover();
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-            focus.prepare_show();
-        }
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.hide();
-        }
+    if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
+        focus.prepare_show();
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
     }
 }
 
@@ -464,10 +452,51 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
     FlyoutOrigin::Bottom
 }
 
+#[cfg(target_os = "macos")]
+fn macos_tray_anchor(app: &tauri::AppHandle) -> Option<(NSRect, NSRect)> {
+    let tray = app.tray_by_id("main")?;
+    tray.with_inner_tray_icon(|inner| {
+        let mtm = MainThreadMarker::new()?;
+        let status_item = inner.ns_status_item()?;
+        let button = status_item.button(mtm)?;
+        let status_window = button.window()?;
+        let rect_in_window = button.convertRect_toView(button.bounds(), None);
+        let anchor = status_window.convertRectToScreen(rect_in_window);
+        let visible_frame = status_window.screen()?.visibleFrame();
+        Some((anchor, visible_frame))
+    })
+    .ok()
+    .flatten()
+}
+
+#[cfg(target_os = "macos")]
+fn position_macos_flyout(window: &tauri::WebviewWindow, anchor: NSRect, visible_frame: NSRect) {
+    let Ok(raw_window) = window.ns_window() else {
+        return;
+    };
+    // SAFETY: Tauri returns the live NSWindow for this WebviewWindow, and this
+    // function only runs from AppKit's main-thread tray/menu callbacks.
+    let native_window = unsafe { &*(raw_window.cast::<NSWindow>()) };
+    let window_size = native_window.frame().size;
+    let min_x = visible_frame.origin.x;
+    let max_x = (visible_frame.origin.x + visible_frame.size.width - window_size.width).max(min_x);
+    let x = (anchor.origin.x + (anchor.size.width - window_size.width) / 2.0).clamp(min_x, max_x);
+    let min_top = visible_frame.origin.y + window_size.height;
+    let max_top = visible_frame.origin.y + visible_frame.size.height;
+    let top = anchor.origin.y.clamp(min_top, max_top);
+    native_window.setFrameTopLeftPoint(NSPoint::new(x, top));
+}
+
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
         {
+            if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
+                focus.prepare_show();
+            }
+            if let Some((anchor, visible_frame)) = macos_tray_anchor(app) {
+                position_macos_flyout(&w, anchor, visible_frame);
+            }
             let _ = w.emit(
                 "navigate",
                 serde_json::json!({
@@ -475,15 +504,14 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                     "origin": FlyoutOrigin::Top.as_str(),
                 }),
             );
-            app.show_popover();
-            // A status-item click does not activate an Accessory app. WebKit can
-            // still accept keystrokes, but macOS will not present IME candidate
-            // UI until the application owns the active text-input context.
             let native_app = NSApplication::sharedApplication(
                 MainThreadMarker::new().expect("tray events run on the main thread"),
             );
             #[allow(deprecated)]
             native_app.activateIgnoringOtherApps(true);
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -509,19 +537,15 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().invoke_handler(tauri::generate_handler![
-        load_config,
-        save_config,
-        save_ui_lang,
-        save_languages,
-        translate,
-        commit_hide
-    ]);
-
-    #[cfg(target_os = "macos")]
-    let builder = builder.plugin(tauri_plugin_nspopover::init());
-
-    builder
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            load_config,
+            save_config,
+            save_ui_lang,
+            save_languages,
+            translate,
+            commit_hide
+        ])
         .setup(|app| {
             let initial_config = read_config(app.handle());
             app.manage(AppState::new(initial_config.clone()));
@@ -584,14 +608,6 @@ pub fn run() {
                             return;
                         };
 
-                        #[cfg(target_os = "macos")]
-                        if app.is_popover_shown() {
-                            let _ = w.emit("flyout-hide", ());
-                        } else {
-                            show_page(app, "translate");
-                        }
-
-                        #[cfg(not(target_os = "macos"))]
                         // The close animation keeps the window visible while it
                         // slides down, so `is_visible` still reflects "open" here:
                         // open -> ask the frontend to slide it out; closed -> show.
@@ -603,26 +619,14 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-
-            #[cfg(target_os = "macos")]
-            {
-                let window = app
-                    .get_webview_window("main")
-                    .expect("main webview window must exist");
-                window.to_popover(ToPopoverOptions {
-                    is_fullsize_content: true,
-                });
-            }
             Ok(())
         })
         .on_window_event(|_window, event| match event {
-            #[cfg(not(target_os = "macos"))]
             // No title bar, but Alt+F4 etc. still request close: hide, don't quit.
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = _window.emit("flyout-hide", ());
             }
-            #[cfg(not(target_os = "macos"))]
             // Ignore startup blur noise until the shown window has actually
             // received focus. A real focus loss then requests exactly one hide.
             tauri::WindowEvent::Focused(focused) => {
