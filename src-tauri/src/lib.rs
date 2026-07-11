@@ -5,6 +5,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "macos")]
+use std::{
+    cell::{Cell, RefCell},
+    ptr::NonNull,
+};
+
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
@@ -19,9 +25,11 @@ use tauri::{
 use tauri::{PhysicalPosition, Rect};
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPopover, NSPopoverBehavior, NSView, NSViewController, NSWindow};
+use objc2::{rc::Retained, runtime::AnyObject};
 #[cfg(target_os = "macos")]
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSRectEdge};
+use objc2_app_kit::{NSEvent, NSEventMask, NSScreen, NSStatusWindowLevel, NSWindow};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{MainThreadMarker, NSPoint};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -452,62 +460,167 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
     FlyoutOrigin::Bottom
 }
 
-#[cfg(target_os = "macos")]
-fn locate_macos_flyout(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Option<NSRect> {
-    let _mtm = MainThreadMarker::new()?;
-    let raw_window = window.ns_window().ok()?;
-    // SAFETY: Tauri owns this NSWindow for the WebviewWindow lifetime, and the
-    // main-thread marker above ensures AppKit access happens on its UI thread.
-    let native_window = unsafe { raw_window.cast::<NSWindow>().as_ref()? };
-    let content_size = native_window.frame().size;
-    let tray = app.tray_by_id("main")?;
-
-    tray.with_inner_tray_icon(move |inner| {
-        let mtm = MainThreadMarker::new()?;
-        let status_item = inner.ns_status_item()?;
-        let button = status_item.button(mtm)?;
-        let _button_window = button.window()?;
-
-        // AppKit alone knows which mirrored menu-bar instance was clicked.
-        // Show an invisible, non-animated popover for one synchronous layout
-        // pass, read its content rect in global AppKit points, then close it.
-        let locator_view = NSView::new(mtm);
-        locator_view.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), content_size));
-        locator_view.setAlphaValue(0.0);
-
-        let controller = NSViewController::new(mtm);
-        controller.setView(locator_view.as_ref());
-
-        let locator = NSPopover::new(mtm);
-        locator.setAnimates(false);
-        locator.setBehavior(NSPopoverBehavior::ApplicationDefined);
-        locator.setContentSize(content_size);
-        locator.setContentViewController(Some(controller.as_ref()));
-        locator.showRelativeToRect_ofView_preferredEdge(
-            button.bounds(),
-            button.as_ref(),
-            NSRectEdge::MaxY,
-        );
-        if !locator.isShown() {
-            locator.close();
-            return None;
-        }
-        locator_view.layoutSubtreeIfNeeded();
-
-        let content_rect = locator_view.window().map(|locator_window| {
-            locator_window.setAlphaValue(0.0);
-            let rect_in_window = locator_view.convertRect_toView(locator_view.bounds(), None);
-            locator_window.convertRectToScreen(rect_in_window)
-        });
-        locator.close();
-        content_rect
-    })
-    .ok()
-    .flatten()
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacosRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
 }
 
 #[cfg(target_os = "macos")]
-fn position_macos_flyout(window: &tauri::WebviewWindow, target: NSRect) {
+#[derive(Clone, Copy, Debug)]
+struct MacosClickTarget {
+    cursor_x: f64,
+    visible_screen: MacosRect,
+    #[cfg(debug_assertions)]
+    cursor_y: f64,
+    #[cfg(debug_assertions)]
+    screen: MacosRect,
+    #[cfg(debug_assertions)]
+    event_number: Option<isize>,
+    #[cfg(debug_assertions)]
+    window_number: Option<isize>,
+    #[cfg(debug_assertions)]
+    source: &'static str,
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static MACOS_CLICK_TARGET: Cell<Option<MacosClickTarget>> = const { Cell::new(None) };
+    static MACOS_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
+}
+
+#[cfg(target_os = "macos")]
+fn macos_rect(rect: objc2_foundation::NSRect) -> MacosRect {
+    MacosRect {
+        x: rect.origin.x,
+        y: rect.origin.y,
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_target_from_screen(
+    screen: &NSScreen,
+    cursor: NSPoint,
+    event: Option<&NSEvent>,
+    source: &'static str,
+) -> MacosClickTarget {
+    #[cfg(not(debug_assertions))]
+    let _ = (event, source);
+    MacosClickTarget {
+        cursor_x: cursor.x,
+        visible_screen: macos_rect(screen.visibleFrame()),
+        #[cfg(debug_assertions)]
+        cursor_y: cursor.y,
+        #[cfg(debug_assertions)]
+        screen: macos_rect(screen.frame()),
+        #[cfg(debug_assertions)]
+        event_number: event.map(NSEvent::eventNumber),
+        #[cfg(debug_assertions)]
+        window_number: event.map(NSEvent::windowNumber),
+        #[cfg(debug_assertions)]
+        source,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_target_from_event(event: &NSEvent) -> Option<MacosClickTarget> {
+    let mtm = MainThreadMarker::new()?;
+    let window = event.window(mtm)?;
+    if window.level() != NSStatusWindowLevel {
+        return None;
+    }
+    // Bind the point to this exact mouse event. The status-item clone's window
+    // is only reliable during native dispatch; the Tauri callback runs later.
+    let cursor = window.convertPointToScreen(event.locationInWindow());
+    macos_target_at_point(cursor, Some(event), "local-monitor")
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_click_monitor() -> bool {
+    let handler = block2::RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit supplies a live NSEvent for the duration of this
+        // main-thread handler. Returning the same pointer preserves dispatch.
+        let event_ref = unsafe { event.as_ref() };
+        if let Some(click_target) = macos_target_from_event(event_ref) {
+            MACOS_CLICK_TARGET.with(|target| target.set(Some(click_target)));
+        }
+        event.as_ptr()
+    });
+    let mask =
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    // SAFETY: The block always returns the original valid event pointer.
+    let monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler) };
+    if let Some(monitor) = monitor {
+        // Keep the removal token on the main thread for the app lifetime.
+        MACOS_CLICK_MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_target_at_point(
+    cursor: NSPoint,
+    event: Option<&NSEvent>,
+    source: &'static str,
+) -> Option<MacosClickTarget> {
+    let mtm = MainThreadMarker::new()?;
+    let screens = NSScreen::screens(mtm);
+    screens
+        .iter()
+        .find(|screen| {
+            let frame = screen.frame();
+            cursor.x >= frame.origin.x
+                && cursor.x < frame.origin.x + frame.size.width
+                && cursor.y >= frame.origin.y
+                && cursor.y < frame.origin.y + frame.size.height
+        })
+        .map(|screen| macos_target_from_screen(screen.as_ref(), cursor, event, source))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_target_at_cursor() -> Option<MacosClickTarget> {
+    macos_target_at_point(NSEvent::mouseLocation(), None, "cursor-fallback")
+}
+
+#[cfg(target_os = "macos")]
+fn locate_macos_flyout() -> Option<MacosClickTarget> {
+    MACOS_CLICK_TARGET
+        .with(Cell::take)
+        .or_else(macos_target_at_cursor)
+}
+
+#[cfg(target_os = "macos")]
+fn discard_macos_click_target() {
+    MACOS_CLICK_TARGET.with(Cell::take);
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn macos_flyout_top_left(
+    visible_screen: MacosRect,
+    cursor_x: f64,
+    flyout_width: f64,
+    horizontal_margin: f64,
+) -> (f64, f64) {
+    let min_x = visible_screen.x + horizontal_margin;
+    let max_x = visible_screen.x + visible_screen.width - flyout_width - horizontal_margin;
+    let centered_x = cursor_x - flyout_width / 2.0;
+    let x = if min_x > max_x {
+        min_x
+    } else {
+        centered_x.clamp(min_x, max_x)
+    };
+    (x, visible_screen.y + visible_screen.height)
+}
+
+#[cfg(target_os = "macos")]
+fn position_macos_flyout(window: &tauri::WebviewWindow, target: MacosClickTarget) {
     let Some(_mtm) = MainThreadMarker::new() else {
         return;
     };
@@ -519,13 +632,25 @@ fn position_macos_flyout(window: &tauri::WebviewWindow, target: NSRect) {
         return;
     };
     let window_size = native_window.frame().size;
-    let x = target.origin.x + (target.size.width - window_size.width) / 2.0;
-    let top = target.origin.y + target.size.height;
+    let (x, top) = macos_flyout_top_left(
+        target.visible_screen,
+        target.cursor_x,
+        window_size.width,
+        8.0,
+    );
     native_window.setFrameTopLeftPoint(NSPoint::new(x, top));
 
     #[cfg(debug_assertions)]
     eprintln!(
-        "SimpleT locator: content={target:?} destination=({x:.1},{top:.1}) frame={:?}",
+        "SimpleT screen-capture: source={} event={:?} window={:?} cursor=({:.1},{:.1}) \
+         screen={:?} visible={:?} destination=({x:.1},{top:.1}) frame={:?}",
+        target.source,
+        target.event_number,
+        target.window_number,
+        target.cursor_x,
+        target.cursor_y,
+        target.screen,
+        target.visible_screen,
         native_window.frame()
     );
 }
@@ -537,10 +662,10 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
                 focus.prepare_show();
             }
-            let target = locate_macos_flyout(app, &w);
+            let target = locate_macos_flyout();
             #[cfg(debug_assertions)]
             if target.is_none() {
-                eprintln!("SimpleT locator: failed to resolve the clicked menu-bar screen");
+                eprintln!("SimpleT screen-capture: failed to resolve the clicked menu-bar screen");
             }
             if let Some(target) = target {
                 position_macos_flyout(&w, target);
@@ -595,7 +720,13 @@ pub fn run() {
             let initial_config = read_config(app.handle());
             app.manage(AppState::new(initial_config.clone()));
             #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                if !install_macos_click_monitor() {
+                    #[cfg(debug_assertions)]
+                    eprintln!("SimpleT screen-capture: failed to install local event monitor");
+                }
+            }
 
             // Localize the tray menu from the saved UI language.
             let (translate_label, settings_label, quit_label, tooltip) =
@@ -657,6 +788,8 @@ pub fn run() {
                         // slides down, so `is_visible` still reflects "open" here:
                         // open -> ask the frontend to slide it out; closed -> show.
                         if w.is_visible().unwrap_or(false) {
+                            #[cfg(target_os = "macos")]
+                            discard_macos_click_target();
                             let _ = w.emit("flyout-hide", ());
                         } else {
                             show_page(app, "translate");
@@ -693,7 +826,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_config_update, extract_translation, Config, ConfigUpdate, FocusState};
+    use super::{
+        apply_config_update, extract_translation, macos_flyout_top_left, Config, ConfigUpdate,
+        FocusState, MacosRect,
+    };
     use serde_json::json;
 
     #[test]
@@ -773,5 +909,20 @@ mod tests {
         apply_config_update(&mut config, update);
 
         assert!(config.api_key.is_empty());
+    }
+
+    #[test]
+    fn mac_flyout_position_preserves_secondary_screen_origin() {
+        let visible = MacosRect {
+            x: 1920.0,
+            y: -900.0,
+            width: 1440.0,
+            height: 875.0,
+        };
+
+        assert_eq!(
+            macos_flyout_top_left(visible, 3200.0, 720.0, 8.0),
+            (2632.0, -25.0)
+        );
     }
 }
