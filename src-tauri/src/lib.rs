@@ -30,6 +30,10 @@ use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_app_kit::{NSEvent, NSEventMask, NSScreen, NSStatusWindowLevel, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{MainThreadMarker, NSPoint};
+#[cfg(target_os = "macos")]
+use tauri_nspanel::{
+    tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt as _,
+};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -655,6 +659,39 @@ fn position_macos_flyout(window: &tauri::WebviewWindow, target: MacosClickTarget
     );
 }
 
+#[cfg(target_os = "macos")]
+tauri_panel! {
+    panel!(FlyoutPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true,
+        }
+    })
+}
+
+// Convert the `main` window into a non-activating NSPanel (idempotent).
+// A non-activating panel can become key — so the WebView gets first responder
+// and the IME candidate window attaches to the caret — WITHOUT activating the
+// app or switching Spaces. That splits the single knob these two problems used
+// to fight over: IME rides on "key", cross-screen rides on "non-activating +
+// move-to-active-space", so tuning one no longer breaks the other.
+#[cfg(target_os = "macos")]
+fn to_flyout_panel(w: &tauri::WebviewWindow) -> Option<tauri_nspanel::PanelHandle<tauri::Wry>> {
+    if let Ok(panel) = w.app_handle().get_webview_panel("main") {
+        return Some(panel);
+    }
+    let panel = w.to_panel::<FlyoutPanel<tauri::Wry>>().ok()?;
+    panel.set_level(PanelLevel::Floating.value());
+    panel.set_collection_behavior(
+        CollectionBehavior::new()
+            .full_screen_auxiliary()
+            .move_to_active_space()
+            .value(),
+    );
+    panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
+    Some(panel)
+}
+
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
@@ -670,9 +707,15 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             if let Some(target) = target {
                 position_macos_flyout(&w, target);
             }
-            let _ = w.show();
-            let _ = w.set_focus();
-            let _ = w.as_ref().set_focus();
+            // Show as a key non-activating panel: keyboard/IME focus without
+            // activating the app or dragging the window to another Space/screen.
+            match to_flyout_panel(&w) {
+                Some(panel) => panel.show_and_make_key(),
+                None => {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
             // Navigate only after the real window is visible and focused so
             // the frontend's requestAnimationFrame focus targets this window.
             let _ = w.emit(
@@ -707,7 +750,13 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+    builder
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,

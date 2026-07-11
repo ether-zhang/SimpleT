@@ -23,3 +23,6 @@ block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", features = ["block2", "NSEvent", "NSResponder", "NSScreen", "NSWindow"] }
 objc2-foundation = "0.3.2"
+# Prototype: non-activating NSPanel so the flyout can become key (IME candidate
+# window) without activating the app / switching Spaces (cross-screen).
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
