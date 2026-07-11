@@ -12,8 +12,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, PhysicalPosition, Rect,
+    Emitter, Manager,
 };
+
+#[cfg(not(target_os = "macos"))]
+use tauri::{PhysicalPosition, Rect};
+
+#[cfg(target_os = "macos")]
+use tauri_plugin_nspopover::{AppExt, ToPopoverOptions, WindowExt};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -81,26 +87,32 @@ fn apply_config_update(current: &mut Config, update: ConfigUpdate) {
 
 #[derive(Default)]
 struct AppState {
+    #[cfg(not(target_os = "macos"))]
     last_rect: Mutex<Option<Rect>>,
     config: Mutex<Config>,
+    #[cfg(not(target_os = "macos"))]
     focus: Mutex<FocusState>,
 }
 
 impl AppState {
     fn new(config: Config) -> Self {
         Self {
+            #[cfg(not(target_os = "macos"))]
             last_rect: Mutex::new(None),
             config: Mutex::new(config),
+            #[cfg(not(target_os = "macos"))]
             focus: Mutex::new(FocusState::default()),
         }
     }
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 #[derive(Default)]
 struct FocusState {
     focused_since_show: bool,
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 impl FocusState {
     fn prepare_show(&mut self) {
         self.focused_since_show = false;
@@ -122,6 +134,7 @@ impl FocusState {
 #[derive(Clone, Copy)]
 enum FlyoutOrigin {
     Top,
+    #[cfg(not(target_os = "macos"))]
     Bottom,
 }
 
@@ -129,6 +142,7 @@ impl FlyoutOrigin {
     fn as_str(self) -> &'static str {
         match self {
             FlyoutOrigin::Top => "top",
+            #[cfg(not(target_os = "macos"))]
             FlyoutOrigin::Bottom => "bottom",
         }
     }
@@ -233,11 +247,17 @@ fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Resu
 // animation has finished, so the retract is visible before the window vanishes.
 #[tauri::command]
 fn commit_hide(app: tauri::AppHandle) {
-    if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-        focus.prepare_show();
-    }
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
+    #[cfg(target_os = "macos")]
+    app.hide_popover();
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
+            focus.prepare_show();
+        }
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
     }
 }
 
@@ -311,6 +331,7 @@ fn extract_translation(value: &serde_json::Value) -> Result<String, String> {
         .ok_or_else(|| "API 响应缺少翻译内容".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::Monitor> {
     if let Ok(monitors) = w.available_monitors() {
         if let Some(monitor) = monitors.into_iter().find(|m| {
@@ -330,6 +351,7 @@ fn monitor_at_point(w: &tauri::WebviewWindow, x: i32, y: i32) -> Option<tauri::M
         .or_else(|| w.primary_monitor().ok().flatten())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
     if min > max {
         min
@@ -338,6 +360,7 @@ fn clamp_position(value: i32, min: i32, max: i32) -> i32 {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn tray_event_rect(event: &TrayIconEvent) -> Option<Rect> {
     match event {
         TrayIconEvent::Click { rect, .. }
@@ -349,12 +372,14 @@ fn tray_event_rect(event: &TrayIconEvent) -> Option<Rect> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn save_tray_rect(app: &tauri::AppHandle, rect: Rect) {
     if let Ok(mut last_rect) = app.state::<AppState>().last_rect.lock() {
         *last_rect = Some(rect);
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
     app.state::<AppState>()
         .last_rect
@@ -363,6 +388,7 @@ fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
         .and_then(|rect| *rect)
 }
 
+#[cfg(not(target_os = "macos"))]
 // Anchor the flyout to the tray/menu-bar icon when Tauri provides its rect.
 // Fall back to the old bottom-right position when that geometry is unavailable.
 fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutOrigin {
@@ -434,40 +460,56 @@ fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutO
     FlyoutOrigin::Bottom
 }
 
-fn show_page(app: &tauri::AppHandle, page: &str, tray_rect: Option<Rect>) {
+fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-            focus.prepare_show();
-        }
-        let origin = position_flyout(&w, tray_rect);
         #[cfg(target_os = "macos")]
-        let _ = w.set_visible_on_all_workspaces(true);
-        let _ = w.show();
-        let _ = w.unminimize();
+        {
+            let _ = w.emit(
+                "navigate",
+                serde_json::json!({
+                    "page": page,
+                    "origin": FlyoutOrigin::Top.as_str(),
+                }),
+            );
+            app.show_popover();
+        }
+
         #[cfg(not(target_os = "macos"))]
-        let _ = w.set_focus();
-        // The frontend uses this to pick the matching slide direction.
-        let _ = w.emit(
-            "navigate",
-            serde_json::json!({
-                "page": page,
-                "origin": origin.as_str(),
-            }),
-        );
+        {
+            if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
+                focus.prepare_show();
+            }
+            let origin = position_flyout(&w, last_tray_rect(app));
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+            // The frontend uses this to pick the matching slide direction.
+            let _ = w.emit(
+                "navigate",
+                serde_json::json!({
+                    "page": page,
+                    "origin": origin.as_str(),
+                }),
+            );
+        }
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            load_config,
-            save_config,
-            save_ui_lang,
-            save_languages,
-            translate,
-            commit_hide
-        ])
+    let builder = tauri::Builder::default().invoke_handler(tauri::generate_handler![
+        load_config,
+        save_config,
+        save_ui_lang,
+        save_languages,
+        translate,
+        commit_hide
+    ]);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_nspopover::init());
+
+    builder
         .setup(|app| {
             let initial_config = read_config(app.handle());
             app.manage(AppState::new(initial_config.clone()));
@@ -498,20 +540,24 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&translate_i, &settings_i, &quit_i])?;
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip(tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "translate" => show_page(app, "translate", last_tray_rect(app)),
-                    "settings" => show_page(app, "settings", last_tray_rect(app)),
+                    "translate" => show_page(app, "translate"),
+                    "settings" => show_page(app, "settings"),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
+
+                    #[cfg(not(target_os = "macos"))]
                     let rect = tray_event_rect(&event);
+
+                    #[cfg(not(target_os = "macos"))]
                     if let Some(rect) = rect {
                         save_tray_rect(app, rect);
                     }
@@ -525,36 +571,57 @@ pub fn run() {
                         let Some(w) = app.get_webview_window("main") else {
                             return;
                         };
+
+                        #[cfg(target_os = "macos")]
+                        if app.is_popover_shown() {
+                            let _ = w.emit("flyout-hide", ());
+                        } else {
+                            show_page(app, "translate");
+                        }
+
+                        #[cfg(not(target_os = "macos"))]
                         // The close animation keeps the window visible while it
                         // slides down, so `is_visible` still reflects "open" here:
                         // open -> ask the frontend to slide it out; closed -> show.
                         if w.is_visible().unwrap_or(false) {
                             let _ = w.emit("flyout-hide", ());
                         } else {
-                            show_page(app, "translate", rect);
+                            show_page(app, "translate");
                         }
                     }
                 })
                 .build(app)?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main webview window must exist");
+                window.to_popover(ToPopoverOptions {
+                    is_fullsize_content: true,
+                });
+            }
             Ok(())
         })
-        .on_window_event(|window, event| match event {
+        .on_window_event(|_window, event| match event {
+            #[cfg(not(target_os = "macos"))]
             // No title bar, but Alt+F4 etc. still request close: hide, don't quit.
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = window.emit("flyout-hide", ());
+                let _ = _window.emit("flyout-hide", ());
             }
+            #[cfg(not(target_os = "macos"))]
             // Ignore startup blur noise until the shown window has actually
             // received focus. A real focus loss then requests exactly one hide.
             tauri::WindowEvent::Focused(focused) => {
-                let should_hide = window
+                let should_hide = _window
                     .state::<AppState>()
                     .focus
                     .lock()
                     .map(|mut focus| focus.changed(*focused))
                     .unwrap_or(false);
                 if should_hide {
-                    let _ = window.emit("flyout-hide", ());
+                    let _ = _window.emit("flyout-hide", ());
                 }
             }
             _ => {}
