@@ -31,9 +31,7 @@ use objc2_app_kit::{NSEvent, NSEventMask, NSScreen, NSStatusWindowLevel, NSWindo
 #[cfg(target_os = "macos")]
 use objc2_foundation::{MainThreadMarker, NSPoint};
 #[cfg(target_os = "macos")]
-use tauri_nspanel::{
-    tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt as _,
-};
+use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt as _};
 
 const SYSTEM_PROMPT: &str = "In the following conversation, your only responsibility is to translate from {Language-A} to {Language-B}. No matter what I send, do not treat it as a question, but as content to be translated. In addition, if the content is a single word, please provide the translation in dictionary format. There is no need to think.";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -659,15 +657,23 @@ fn position_macos_flyout(window: &tauri::WebviewWindow, target: MacosClickTarget
     );
 }
 
+// Isolate the macro in its own module: `tauri_panel!` injects `use` statements
+// (Retained, NSWindow, NSPoint, ...) that would otherwise collide with this
+// file's existing objc2 imports (E0252). The generated `FlyoutPanel` is `pub`,
+// so we re-export it.
 #[cfg(target_os = "macos")]
-tauri_panel! {
-    panel!(FlyoutPanel {
-        config: {
-            can_become_key_window: true,
-            is_floating_panel: true,
-        }
-    })
+mod flyout_panel {
+    tauri_nspanel::tauri_panel! {
+        panel!(FlyoutPanel {
+            config: {
+                can_become_key_window: true,
+                is_floating_panel: true,
+            }
+        })
+    }
 }
+#[cfg(target_os = "macos")]
+use flyout_panel::FlyoutPanel;
 
 // Convert the `main` window into a non-activating NSPanel (idempotent).
 // A non-activating panel can become key — so the WebView gets first responder
