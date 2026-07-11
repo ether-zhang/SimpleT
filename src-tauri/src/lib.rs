@@ -672,6 +672,12 @@ mod flyout_panel {
         panel!(FlyoutPanel {
             config: {
                 can_become_key_window: true,
+                // Become key only when a control actually needs input, not on
+                // show. Forcing key at show time made this accessory app read
+                // as "activated" in a full-screen Space and hid the menu bar
+                // (Apple FB13544993), which visually detached the dropdown from
+                // its menu-bar anchor.
+                becomes_key_only_if_needed: true,
                 is_floating_panel: true,
             }
         })
@@ -725,8 +731,11 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             }
             // Show as a key non-activating panel: keyboard/IME focus without
             // activating the app or dragging the window to another Space/screen.
+            // show() (orderFrontRegardless) without forcing key: with
+            // becomes_key_only_if_needed the panel takes key when the user
+            // focuses the input, so the menu bar isn't disturbed on open.
             match to_flyout_panel(&w) {
-                Some(panel) => panel.show_and_make_key(),
+                Some(panel) => panel.show(),
                 None => {
                     let _ = w.show();
                     let _ = w.set_focus();
