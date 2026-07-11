@@ -19,7 +19,7 @@ use tauri::{
 use tauri::{PhysicalPosition, Rect};
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::NSApplication;
+use objc2_app_kit::{NSApplication, NSPopoverBehavior};
 #[cfg(target_os = "macos")]
 use objc2_foundation::MainThreadMarker;
 #[cfg(target_os = "macos")]
@@ -642,6 +642,12 @@ pub fn run() {
                 window.to_popover(ToPopoverOptions {
                     is_fullsize_content: true,
                 });
+                // WebKit uses a semitransient popover for WKWebView-backed
+                // extension popups. Match that behavior so auxiliary input-
+                // method UI is not subject to fully transient dismissal.
+                app.handle()
+                    .ns_popover()
+                    .setBehavior(NSPopoverBehavior::Semitransient);
             }
             Ok(())
         })
