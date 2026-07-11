@@ -663,6 +663,11 @@ fn position_macos_flyout(window: &tauri::WebviewWindow, target: MacosClickTarget
 // so we re-export it.
 #[cfg(target_os = "macos")]
 mod flyout_panel {
+    // The macro expansion calls `.app_handle()`/`.state()`, which come from the
+    // `Manager` trait; it must be in scope here since we moved the macro into
+    // its own module.
+    use tauri::Manager;
+
     tauri_nspanel::tauri_panel! {
         panel!(FlyoutPanel {
             config: {
