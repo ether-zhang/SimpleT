@@ -494,9 +494,7 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
                 focus.prepare_show();
             }
-            if let Some((anchor, visible_frame)) = macos_tray_anchor(app) {
-                position_macos_flyout(&w, anchor, visible_frame);
-            }
+            let tray_anchor = macos_tray_anchor(app);
             let _ = w.emit(
                 "navigate",
                 serde_json::json!({
@@ -512,6 +510,11 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             let _ = w.show();
             let _ = w.unminimize();
             let _ = w.set_focus();
+            // Showing or focusing a previously hidden Tao window can restore
+            // its old frame. Apply the status-item frame last so it wins.
+            if let Some((anchor, visible_frame)) = tray_anchor {
+                position_macos_flyout(&w, anchor, visible_frame);
+            }
         }
 
         #[cfg(not(target_os = "macos"))]
