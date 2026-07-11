@@ -697,9 +697,10 @@ fn to_flyout_panel(w: &tauri::WebviewWindow) -> Option<tauri_nspanel::PanelHandl
     panel.set_level(PanelLevel::Floating.value());
     panel.set_collection_behavior(
         CollectionBehavior::new()
-            // No full_screen_auxiliary: on a secondary display it can trip the
-            // menu bar's auto-hide. The flyout only needs to follow the active
-            // Space, not overlay full-screen apps.
+            // full_screen_auxiliary lets the flyout appear on a full-screen
+            // app's Space; without it the window is hidden when a full-screen
+            // window occupies the current Space.
+            .full_screen_auxiliary()
             .move_to_active_space()
             .value(),
     );
