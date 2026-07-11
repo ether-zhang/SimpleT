@@ -783,7 +783,11 @@ pub fn run() {
             app.manage(AppState::new(initial_config.clone()));
             #[cfg(target_os = "macos")]
             {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                // Prohibited (not Accessory): the app must never activate. The
+                // flyout still gets keyboard/IME via the non-activating panel
+                // becoming key. Accessory let the app activate on show, which on
+                // a secondary display disturbed the system menu bar.
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
                 if !install_macos_click_monitor() {
                     #[cfg(debug_assertions)]
                     eprintln!("SimpleT screen-capture: failed to install local event monitor");
