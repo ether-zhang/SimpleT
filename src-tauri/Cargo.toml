@@ -1,6 +1,6 @@
 [package]
 name = "simplet"
-version = "1.0.0"
+version = "1.1.0"
 description = "SimpleT - a lightweight LLM translation tray app"
 authors = ["you"]
 edition = "2021"
