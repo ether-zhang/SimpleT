@@ -242,6 +242,7 @@ let secondOpenFrame = null;
 let translationInFlight = false;
 let apiKeyChanged = false;
 let apiKeyConfigured = false;
+let configLoadError = "";
 
 function updateApiKeyUI() {
   els.cfgKey.placeholder = apiKeyConfigured ? "••••••••" : "sk-…";
@@ -315,21 +316,31 @@ async function doTranslate() {
     els.output.value = "";
     return;
   }
+  const langA = els.langA.value;
+  const langB = els.langB.value;
+  const isCurrentInput = () =>
+    els.input.value === text && els.langA.value === langA && els.langB.value === langB;
+  const progressMessage = t("translating");
   translationInFlight = true;
-  els.status.textContent = t("translating");
+  els.status.textContent = progressMessage;
   els.translateBtn.disabled = true;
   try {
     const result = await invoke("translate", {
       text,
-      langA: els.langA.value,
-      langB: els.langB.value,
+      langA,
+      langB,
     });
+    if (!isCurrentInput()) return;
     els.output.value = result;
     els.status.textContent = "";
   } catch (e) {
+    if (!isCurrentInput()) return;
     els.output.value = "";
     els.status.textContent = String(e);
   } finally {
+    if (!isCurrentInput() && els.status.textContent === progressMessage) {
+      els.status.textContent = "";
+    }
     translationInFlight = false;
     els.translateBtn.disabled = false;
   }
@@ -347,6 +358,9 @@ async function loadConfigIntoUI() {
   els.langB.value = cfg.lang_b || "English";
   els.cfgUiLang.value = cfg.ui_lang || "zh";
   applyLocale(els.cfgUiLang.value);
+  configLoadError = cfg.load_error || "";
+  els.cfgStatus.textContent = configLoadError;
+  els.status.textContent = configLoadError;
 }
 
 async function saveConfig() {
@@ -367,6 +381,10 @@ async function saveConfig() {
       updateApiKeyUI();
     }
     els.cfgStatus.textContent = t("saved");
+    if (configLoadError && els.status.textContent === configLoadError) {
+      els.status.textContent = "";
+    }
+    configLoadError = "";
     setTimeout(() => (els.cfgStatus.textContent = ""), 1500);
   } catch (e) {
     els.cfgStatus.textContent = String(e);
@@ -451,6 +469,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   // Ctrl+Enter 快速翻译
   els.input.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       doTranslate();
@@ -483,6 +502,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Esc 收起浮窗（带下滑动画）
   document.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") slideOutThenHide();
   });
 
