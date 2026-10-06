@@ -20,13 +20,14 @@
 body {
   margin: 0;
   height: 100vh;
-  padding: 12px;
+  padding: 6px;
   overflow: hidden;
   background: transparent;
 }
 
 /* 悬浮卡片：圆角 + 阴影，构成“轻量浮窗”外观 */
 .card {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -38,6 +39,32 @@ body {
   clip-path: inset(100% 0 0 0);
   transition: clip-path 0.28s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: clip-path;
+}
+
+.close-flyout {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.close-flyout:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+.close-flyout:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .card.from-top {
@@ -74,6 +101,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding-right: 32px;
 }
 
 .lang-select {
@@ -179,6 +207,7 @@ body {
 }
 #page-settings h2 {
   margin: 0;
+  padding-right: 32px;
   font-size: 18px;
 }
 #page-settings label {

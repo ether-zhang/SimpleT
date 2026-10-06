@@ -24,6 +24,7 @@ async function createApp(config = {}, options = {}) {
     if (!elements.has(selector)) {
       const classes = new Set();
       const listeners = new Map();
+      const attributes = new Map();
       elements.set(selector, {
         value: "", textContent: "", disabled: false,
         classList: {
@@ -33,6 +34,8 @@ async function createApp(config = {}, options = {}) {
           contains(name) { return classes.has(name); },
         },
         addEventListener(name, handler) { listeners.set(name, handler); },
+        setAttribute(name, value) { attributes.set(name, value); },
+        getAttribute(name) { return attributes.get(name); },
         dispatch(name, event = {}) { return listeners.get(name)?.(event); },
         appendChild() {}, focus() { this.focused = true; }, offsetHeight: 0,
       });
@@ -191,6 +194,26 @@ test("Escape outside composition still closes the flyout", async () => {
   const app = await createApp();
   app.keydown({ key: "Escape", isComposing: false });
   assert.equal(app.timers.size, 1);
+});
+
+for (const page of ["translate", "settings"]) {
+  test(`the shared close button hides the ${page} page without quitting`, async () => {
+    const app = await createApp({}, { initialPage: page });
+    app.element("#close-flyout").dispatch("click");
+    assert.equal(app.timers.size, 1);
+    app.runTimer([...app.timers.keys()][0]);
+    assert.ok(app.commands.some(({ command }) => command === "commit_hide"));
+    assert.equal(app.commands.some(({ command }) => command === "quit"), false);
+  });
+}
+
+test("the close button tooltip and accessible label follow the UI language", async () => {
+  const app = await createApp({ ui_lang: "en" });
+  assert.equal(app.element("#close-flyout").title, "Hide window");
+  assert.equal(app.element("#close-flyout").getAttribute("aria-label"), "Hide window");
+  app.element("#cfg-ui-lang").value = "zh";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.equal(app.element("#close-flyout").title, "收起窗口");
 });
 
 test("configuration read errors are visible and clear after explicit save", async () => {

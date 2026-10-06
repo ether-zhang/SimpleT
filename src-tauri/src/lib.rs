@@ -23,7 +23,7 @@ use tauri::{
 };
 
 #[cfg(not(target_os = "macos"))]
-use tauri::{PhysicalPosition, Rect};
+use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize, Rect};
 
 #[cfg(target_os = "macos")]
 use objc2::{rc::Retained, runtime::AnyObject};
@@ -177,7 +177,7 @@ struct AppState {
     #[cfg(not(target_os = "macos"))]
     last_rect: Mutex<Option<Rect>>,
     config: Mutex<ConfigState>,
-    focus: Mutex<FocusState>,
+    flyout: Mutex<FlyoutState>,
 }
 
 impl AppState {
@@ -186,14 +186,13 @@ impl AppState {
             #[cfg(not(target_os = "macos"))]
             last_rect: Mutex::new(None),
             config: Mutex::new(config),
-            focus: Mutex::new(FocusState::default()),
+            flyout: Mutex::new(FlyoutState::default()),
         }
     }
 }
 
 #[derive(Default)]
-struct FocusState {
-    focused_since_show: bool,
+struct FlyoutState {
     ready: bool,
     visible: bool,
     closing: bool,
@@ -209,24 +208,21 @@ enum FlyoutAction {
     Pending,
 }
 
-impl FocusState {
+impl FlyoutState {
     fn prepare_show(&mut self) -> u32 {
         self.generation = self.generation.wrapping_add(1);
         self.visible = true;
         self.closing = false;
-        self.focused_since_show = false;
         self.generation
     }
 
-    fn request_show(&mut self, page: &str, already_focused: bool) -> Option<u32> {
+    fn request_show(&mut self, page: &str) -> Option<u32> {
         if !self.ready {
             self.pending_page = Some(page.to_owned());
             return None;
         }
         self.current_page = Some(page.to_owned());
-        let generation = self.prepare_show();
-        self.focused_since_show = already_focused;
-        Some(generation)
+        Some(self.prepare_show())
     }
 
     fn frontend_ready(&mut self) -> Option<String> {
@@ -248,7 +244,7 @@ impl FocusState {
                 Some("translate".into())
             };
             FlyoutAction::Pending
-        } else if self.visible && !self.closing {
+        } else if self.visible {
             FlyoutAction::Hide
         } else {
             FlyoutAction::Show
@@ -267,7 +263,6 @@ impl FocusState {
             return None;
         }
         self.closing = true;
-        self.focused_since_show = false;
         Some(self.generation)
     }
 
@@ -277,23 +272,7 @@ impl FocusState {
         }
         self.visible = false;
         self.closing = false;
-        self.focused_since_show = false;
         true
-    }
-
-    fn changed(&mut self, focused: bool) -> bool {
-        if !self.visible || self.closing {
-            return false;
-        }
-        if focused {
-            self.focused_since_show = true;
-            false
-        } else if self.focused_since_show {
-            self.focused_since_show = false;
-            true
-        } else {
-            false
-        }
     }
 }
 
@@ -469,7 +448,7 @@ fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Resu
 fn request_flyout_hide(app: &tauri::AppHandle, expected_generation: Option<u32>) {
     let generation = app
         .state::<AppState>()
-        .focus
+        .flyout
         .lock()
         .ok()
         .and_then(|mut focus| focus.request_hide(expected_generation));
@@ -487,7 +466,7 @@ fn frontend_ready(app: tauri::AppHandle) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let page = handle
             .state::<AppState>()
-            .focus
+            .flyout
             .lock()
             .ok()
             .and_then(|mut focus| focus.frontend_ready());
@@ -513,7 +492,7 @@ fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let should_hide = handle
             .state::<AppState>()
-            .focus
+            .flyout
             .lock()
             .map(|mut focus| focus.commit_hide(generation))
             .unwrap_or(false);
@@ -660,75 +639,85 @@ fn last_tray_rect(app: &tauri::AppHandle) -> Option<Rect> {
 }
 
 #[cfg(not(target_os = "macos"))]
-// Anchor the flyout to the tray/menu-bar icon when Tauri provides its rect.
-// Fall back to the old bottom-right position when that geometry is unavailable.
-fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutOrigin {
-    let win = match w.outer_size() {
-        Ok(s) => s,
-        Err(_) => return FlyoutOrigin::Bottom,
-    };
+fn taskbar_origin(monitor: &PhysicalRect<i32, u32>, work: &PhysicalRect<i32, u32>) -> FlyoutOrigin {
+    let top_inset = work.position.y - monitor.position.y;
+    let bottom_inset =
+        monitor.position.y + monitor.size.height as i32 - work.position.y - work.size.height as i32;
+    if top_inset > bottom_inset {
+        FlyoutOrigin::Top
+    } else {
+        FlyoutOrigin::Bottom
+    }
+}
 
-    if let Some(rect) = tray_rect {
+#[cfg(not(target_os = "macos"))]
+fn work_area_flyout_position(
+    work: &PhysicalRect<i32, u32>,
+    win: PhysicalSize<u32>,
+    scale: f64,
+    anchor_x: Option<i32>,
+    origin: FlyoutOrigin,
+) -> PhysicalPosition<i32> {
+    let margin = (2.0 * scale).round() as i32;
+    let right = work.position.x + work.size.width as i32;
+    let bottom = work.position.y + work.size.height as i32;
+    let win_w = win.width as i32;
+    let win_h = win.height as i32;
+    let preferred_x = anchor_x.map_or(right - win_w - margin, |x| x - win_w / 2);
+    let preferred_y = match origin {
+        FlyoutOrigin::Top => work.position.y + margin,
+        FlyoutOrigin::Bottom => bottom - win_h - margin,
+    };
+    PhysicalPosition::new(
+        clamp_position(
+            preferred_x,
+            work.position.x + margin,
+            right - win_w - margin,
+        ),
+        clamp_position(
+            preferred_y,
+            work.position.y + margin,
+            bottom - win_h - margin,
+        ),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn position_flyout(w: &tauri::WebviewWindow, tray_rect: Option<Rect>) -> FlyoutOrigin {
+    let Ok(win) = w.outer_size() else {
+        return FlyoutOrigin::Bottom;
+    };
+    let anchor = tray_rect.and_then(|rect| {
         let pos = rect.position.to_physical::<i32>(1.0);
         let size = rect.size.to_physical::<u32>(1.0);
-        if size.width > 0 && size.height > 0 {
-            let anchor_center_x = pos.x + size.width as i32 / 2;
-            let anchor_center_y = pos.y + size.height as i32 / 2;
-
-            if let Some(monitor) = monitor_at_point(w, anchor_center_x, anchor_center_y) {
-                let work = monitor.work_area();
-                let margin = (8.0 * monitor.scale_factor()).round() as i32;
-                let win_w = win.width as i32;
-                let win_h = win.height as i32;
-                let work_left = work.position.x;
-                let work_top = work.position.y;
-                let work_right = work_left + work.size.width as i32;
-                let work_bottom = work_top + work.size.height as i32;
-                let anchor_top = pos.y;
-                let anchor_bottom = pos.y + size.height as i32;
-                let monitor_mid_y = monitor.position().y + monitor.size().height as i32 / 2;
-                let origin = if anchor_center_y <= monitor_mid_y {
-                    FlyoutOrigin::Top
-                } else {
-                    FlyoutOrigin::Bottom
-                };
-
-                let x = clamp_position(
-                    anchor_center_x - win_w / 2,
-                    work_left + margin,
-                    work_right - win_w - margin,
-                );
-                let preferred_y = match origin {
-                    FlyoutOrigin::Top => anchor_bottom + margin,
-                    FlyoutOrigin::Bottom => anchor_top - win_h - margin,
-                };
-                let y =
-                    clamp_position(preferred_y, work_top + margin, work_bottom - win_h - margin);
-
-                let _ = w.set_position(PhysicalPosition::new(x, y));
-                return origin;
-            }
-        }
-    }
-
-    let monitor = match w
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| w.primary_monitor().ok().flatten())
-    {
-        Some(m) => m,
-        None => return FlyoutOrigin::Bottom,
+        (size.width > 0 && size.height > 0).then_some((
+            pos.x + size.width as i32 / 2,
+            pos.y + size.height as i32 / 2,
+        ))
+    });
+    let monitor = anchor
+        .and_then(|(x, y)| monitor_at_point(w, x, y))
+        .or_else(|| w.current_monitor().ok().flatten())
+        .or_else(|| w.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return FlyoutOrigin::Bottom;
     };
-    let m_pos = monitor.position();
-    let m_size = monitor.size();
+    let work = monitor.work_area();
+    let bounds = PhysicalRect {
+        position: *monitor.position(),
+        size: *monitor.size(),
+    };
+    let origin = taskbar_origin(&bounds, work);
     let scale = monitor.scale_factor();
-    let margin = (12.0 * scale) as i32;
-    let taskbar = (56.0 * scale) as i32;
-    let x = (m_pos.x + m_size.width as i32 - win.width as i32 - margin).max(m_pos.x);
-    let y = (m_pos.y + m_size.height as i32 - win.height as i32 - taskbar).max(m_pos.y);
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-    FlyoutOrigin::Bottom
+    let win = w.scale_factor().map_or(win, |current_scale| {
+        win.to_logical::<f64>(current_scale)
+            .to_physical::<u32>(scale)
+    });
+    // Use the work-area edge even when the icon is in the tray overflow popup.
+    // Its popup Y coordinate must not lift the flyout away from the taskbar.
+    let position = work_area_flyout_position(work, win, scale, anchor.map(|(x, _)| x), origin);
+    let _ = w.set_position(position);
+    origin
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -761,7 +750,6 @@ struct MacosClickTarget {
 thread_local! {
     static MACOS_CLICK_TARGET: Cell<Option<MacosClickTarget>> = const { Cell::new(None) };
     static MACOS_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
-    static MACOS_OUTSIDE_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
 }
 
 #[cfg(target_os = "macos")]
@@ -830,25 +818,6 @@ fn install_macos_click_monitor() -> bool {
     if let Some(monitor) = monitor {
         // Keep the removal token on the main thread for the app lifetime.
         MACOS_CLICK_MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
-        true
-    } else {
-        false
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn install_macos_outside_click_monitor(app: tauri::AppHandle) -> bool {
-    let handler = block2::RcBlock::new(move |_event: NonNull<NSEvent>| {
-        // Global mouse monitors receive clicks in other apps, even if our
-        // non-activating panel never acquired keyboard focus.
-        request_flyout_hide(&app, None);
-    });
-    let mask =
-        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
-    // AppKit invokes this mouse-only observer on the main thread.
-    let monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &handler);
-    if let Some(monitor) = monitor {
-        MACOS_OUTSIDE_CLICK_MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
         true
     } else {
         false
@@ -965,6 +934,7 @@ mod flyout_panel {
                 // AppKit. Allow clicks to restore keyboard focus to the panel.
                 becomes_key_only_if_needed: false,
                 is_floating_panel: true,
+                hides_on_deactivate: false,
             }
         })
     }
@@ -1002,13 +972,12 @@ fn to_flyout_panel(w: &tauri::WebviewWindow) -> Option<tauri_nspanel::PanelHandl
 
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        let already_focused = w.is_focused().unwrap_or(false);
         let generation = app
             .state::<AppState>()
-            .focus
+            .flyout
             .lock()
             .ok()
-            .and_then(|mut focus| focus.request_show(page, already_focused));
+            .and_then(|mut focus| focus.request_show(page));
         let Some(generation) = generation else {
             return;
         };
@@ -1101,10 +1070,6 @@ pub fn run() {
                     #[cfg(debug_assertions)]
                     eprintln!("SimpleT screen-capture: failed to install local event monitor");
                 }
-                if !install_macos_outside_click_monitor(app.handle().clone()) {
-                    #[cfg(debug_assertions)]
-                    eprintln!("SimpleT: failed to install outside-click monitor");
-                }
             }
 
             // Localize the tray menu from the saved UI language.
@@ -1152,7 +1117,7 @@ pub fn run() {
                     {
                         let action = app
                             .state::<AppState>()
-                            .focus
+                            .flyout
                             .lock()
                             .map(|mut focus| focus.toggle())
                             .unwrap_or(FlyoutAction::Pending);
@@ -1170,31 +1135,12 @@ pub fn run() {
                 .build(app)?;
             Ok(())
         })
-        .on_window_event(|_window, event| match event {
+        .on_window_event(|window, event| {
             // No title bar, but Alt+F4 etc. still request close: hide, don't quit.
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                request_flyout_hide(_window.app_handle(), None);
+                request_flyout_hide(window.app_handle(), None);
             }
-            // Ignore startup blur noise until the shown window has actually
-            // received focus. A real focus loss then requests exactly one hide.
-            tauri::WindowEvent::Focused(focused) => {
-                // A queued blur from the previous opening may arrive after the
-                // same native window has regained focus.
-                if !focused && _window.is_focused().unwrap_or(false) {
-                    return;
-                }
-                let should_hide = _window
-                    .state::<AppState>()
-                    .focus
-                    .lock()
-                    .map(|mut focus| focus.changed(*focused))
-                    .unwrap_or(false);
-                if should_hide {
-                    request_flyout_hide(_window.app_handle(), None);
-                }
-            }
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1205,7 +1151,7 @@ mod tests {
     use super::{
         apply_config_update, extract_translation, macos_flyout_top_left, read_config_from_path,
         translation_request_body, translation_system_prompt, translation_user_message,
-        write_config_to_path, Config, ConfigState, ConfigUpdate, FlyoutAction, FocusState,
+        write_config_to_path, Config, ConfigState, ConfigUpdate, FlyoutAction, FlyoutState,
         MacosRect,
     };
     use serde_json::json;
@@ -1213,18 +1159,18 @@ mod tests {
 
     #[test]
     fn startup_navigation_waits_for_the_frontend_and_keeps_the_last_page() {
-        let mut state = FocusState::default();
-        assert_eq!(state.request_show("translate", false), None);
-        assert_eq!(state.request_show("settings", false), None);
+        let mut state = FlyoutState::default();
+        assert_eq!(state.request_show("translate"), None);
+        assert_eq!(state.request_show("settings"), None);
         assert!(!state.visible);
         assert_eq!(state.frontend_ready().as_deref(), Some("settings"));
-        assert!(state.request_show("settings", false).is_some());
+        assert!(state.request_show("settings").is_some());
         assert!(state.visible);
     }
 
     #[test]
     fn repeated_startup_tray_clicks_can_cancel_the_pending_open() {
-        let mut state = FocusState::default();
+        let mut state = FlyoutState::default();
         assert_eq!(state.toggle(), FlyoutAction::Pending);
         assert_eq!(state.toggle(), FlyoutAction::Pending);
         assert_eq!(state.frontend_ready(), None);
@@ -1232,21 +1178,21 @@ mod tests {
     }
 
     #[test]
-    fn an_outside_click_cancels_a_startup_open() {
-        let mut state = FocusState::default();
-        state.request_show("settings", false);
+    fn an_explicit_close_cancels_a_startup_open() {
+        let mut state = FlyoutState::default();
+        state.request_show("settings");
         assert_eq!(state.request_hide(None), None);
         assert_eq!(state.frontend_ready(), None);
     }
 
     #[test]
-    fn reopening_invalidates_an_in_flight_close_commit() {
-        let mut state = FocusState::default();
+    fn explicit_navigation_invalidates_an_in_flight_close_commit() {
+        let mut state = FlyoutState::default();
         state.frontend_ready();
-        let first = state.request_show("translate", false).unwrap();
+        let first = state.request_show("translate").unwrap();
         assert_eq!(state.request_hide(Some(first)), Some(first));
-        assert_eq!(state.toggle(), FlyoutAction::Show);
-        let second = state.request_show("settings", false).unwrap();
+        assert_eq!(state.toggle(), FlyoutAction::Hide);
+        let second = state.request_show("settings").unwrap();
         assert_ne!(first, second);
         assert!(!state.commit_hide(first));
         assert!(state.visible);
@@ -1258,10 +1204,10 @@ mod tests {
 
     #[test]
     fn duplicate_and_stale_hide_requests_are_ignored() {
-        let mut state = FocusState::default();
+        let mut state = FlyoutState::default();
         state.frontend_ready();
-        let first = state.request_show("translate", false).unwrap();
-        let second = state.request_show("settings", false).unwrap();
+        let first = state.request_show("translate").unwrap();
+        let second = state.request_show("settings").unwrap();
         assert_eq!(state.request_hide(Some(first)), None);
         assert!(!state.closing);
         assert!(!state.commit_hide(second));
@@ -1273,13 +1219,13 @@ mod tests {
 
     #[test]
     fn reloaded_frontend_recovers_visible_navigation_and_cancels_old_closes() {
-        let mut state = FocusState::default();
+        let mut state = FlyoutState::default();
         state.frontend_ready();
-        let first = state.request_show("settings", false).unwrap();
+        let first = state.request_show("settings").unwrap();
         state.request_hide(Some(first));
         let page = state.frontend_ready().unwrap();
         assert_eq!(page, "settings");
-        state.request_show(&page, false);
+        state.request_show(&page);
         assert!(!state.commit_hide(first));
         assert!(state.visible);
     }
@@ -1448,32 +1394,79 @@ mod tests {
     }
 
     #[test]
-    fn switching_pages_in_an_already_focused_window_keeps_blur_detection() {
-        let mut state = FocusState::default();
+    fn repeated_tray_clicks_finish_closing_instead_of_reopening() {
+        let mut state = FlyoutState::default();
         state.frontend_ready();
-        state.request_show("translate", false);
-        state.changed(true);
-        state.request_show("settings", true);
-        assert!(state.changed(false));
+        assert_eq!(state.toggle(), FlyoutAction::Show);
+        let generation = state.request_show("translate").unwrap();
+        assert_eq!(state.toggle(), FlyoutAction::Hide);
+        assert_eq!(state.request_hide(Some(generation)), Some(generation));
+        assert_eq!(state.toggle(), FlyoutAction::Hide);
+        assert_eq!(state.request_hide(Some(generation)), None);
+        assert!(state.commit_hide(generation));
+        assert_eq!(state.toggle(), FlyoutAction::Show);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn startup_blur_does_not_hide_before_focus() {
-        let mut state = FocusState::default();
-
-        state.prepare_show();
-
-        assert!(!state.changed(false));
+    fn bottom_flyout_sits_next_to_the_taskbar_even_from_an_overflow_icon() {
+        use super::{taskbar_origin, work_area_flyout_position, FlyoutOrigin};
+        use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize};
+        let monitor = PhysicalRect {
+            position: PhysicalPosition::new(0, 0),
+            size: PhysicalSize::new(1920, 1080),
+        };
+        let work = PhysicalRect {
+            position: PhysicalPosition::new(0, 0),
+            size: PhysicalSize::new(1920, 1032),
+        };
+        let origin = taskbar_origin(&monitor, &work);
+        assert!(matches!(origin, FlyoutOrigin::Bottom));
+        let position =
+            work_area_flyout_position(&work, PhysicalSize::new(720, 460), 1.0, Some(1800), origin);
+        assert_eq!(position, PhysicalPosition::new(1198, 570));
+        assert_eq!(work.size.height as i32 - position.y - 460, 2);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn real_blur_hides_once_after_focus() {
-        let mut state = FocusState::default();
+    fn fallback_position_uses_the_actual_taskbar_height() {
+        use super::{work_area_flyout_position, FlyoutOrigin};
+        use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize};
+        let work = PhysicalRect {
+            position: PhysicalPosition::new(0, 0),
+            size: PhysicalSize::new(1920, 984),
+        };
+        let position = work_area_flyout_position(
+            &work,
+            PhysicalSize::new(720, 460),
+            1.0,
+            None,
+            FlyoutOrigin::Bottom,
+        );
+        assert_eq!(position, PhysicalPosition::new(1198, 522));
+        assert_eq!(work.size.height as i32 - position.y - 460, 2);
+    }
 
-        state.prepare_show();
-        assert!(!state.changed(true));
-        assert!(state.changed(false));
-        assert!(!state.changed(false));
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn top_taskbar_and_scaled_secondary_monitor_keep_a_small_gap() {
+        use super::{taskbar_origin, work_area_flyout_position, FlyoutOrigin};
+        use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize};
+        let monitor = PhysicalRect {
+            position: PhysicalPosition::new(-1920, -100),
+            size: PhysicalSize::new(1920, 1080),
+        };
+        let work = PhysicalRect {
+            position: PhysicalPosition::new(-1920, -28),
+            size: PhysicalSize::new(1920, 1008),
+        };
+        let origin = taskbar_origin(&monitor, &work);
+        assert!(matches!(origin, FlyoutOrigin::Top));
+        let position =
+            work_area_flyout_position(&work, PhysicalSize::new(1080, 690), 1.5, Some(-20), origin);
+        assert_eq!(position, PhysicalPosition::new(-1083, -25));
+        assert_eq!(position.y - work.position.y, 3);
     }
 
     #[test]

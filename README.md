@@ -10,6 +10,7 @@ SimpleT 是一个轻量级桌面托盘翻译工具，基于 Tauri 构建。它�
 - OpenAI-compatible endpoint, API key, and model settings / 支持配置兼容 OpenAI 的接口、API Key 和模型名
 - Bidirectional language swap / 支持源语言和目标语言互换
 - Localized UI language selection / 支持界面语言切换
+- Persistent flyout: click the tray icon or × to hide it; clicking elsewhere keeps it open / 浮窗保持显示，点击托盘图标或 × 收起，点击其他位置不会收起
 
 ## Development / 开发
 
@@ -52,17 +53,17 @@ GitHub Actions 在 Windows 和 macOS 上运行上述检查。配置损坏时界�
 
 ## macOS compatibility / macOS 兼容性
 
-Tauri 2.12.1 or later is required. The lockfile includes the `tray-icon` fix for macOS 27 swallowing left clicks when a menu is attached ([upstream fix](https://github.com/tauri-apps/tray-icon/pull/365)). Left click opens the translation panel; right click opens the menu.
+Tauri 2.12.1 or later is required. The lockfile includes the `tray-icon` fix for macOS 27 swallowing left clicks when a menu is attached ([upstream fix](https://github.com/tauri-apps/tray-icon/pull/365)). Left click toggles the translation panel; right click opens the menu.
 
-要求 Tauri 2.12.1 或更新版本。锁定的依赖包含 macOS 27 左键点击被托盘菜单拦截的修复。左键打开翻译浮窗，右键打开菜单。
+要求 Tauri 2.12.1 或更新版本。锁定的依赖包含 macOS 27 左键点击被托盘菜单拦截的修复。左键切换浮窗显示和收起，右键打开菜单。
 
-Before a macOS release, verify on a real Mac: left/right tray clicks, immediate typing and Chinese IME, Escape, outside-click dismissal, reopening, multiple displays with different scaling, and full-screen Spaces. Windows tests cannot validate these AppKit behaviors.
+Before a macOS release, verify on a real Mac: left/right tray clicks, immediate typing and Chinese IME, Escape and ×, staying visible after outside clicks, reopening, multiple displays with different scaling, and full-screen Spaces. Windows tests cannot validate these AppKit behaviors.
 
-发布 macOS 版本前，请在真机验证托盘左右键、打开后输入、中文输入法、Esc、点击外部收起、重新打开，以及不同缩放的多屏和全屏空间。这些 AppKit 行为无法通过 Windows 测试验证。
+发布 macOS 版本前，请在真机验证托盘左右键、打开后输入、中文输入法、Esc 和 ×、点击外部后保持显示、重新打开，以及不同缩放的多屏和全屏空间。这些 AppKit 行为无法通过 Windows 测试验证。
 
-Also check opening Settings immediately after launch, reopening during the close animation, editing or clearing an API key while saving, and changing the tray menu language without restarting. Edits made during a save remain as unsaved drafts.
+Also check opening Settings immediately after launch, repeated tray clicks during the close animation, editing or clearing an API key while saving, and changing the tray menu language without restarting. Edits made during a save remain as unsaved drafts.
 
-同时检查启动后立即打开设置、收起动画中重新打开浮窗、保存期间编辑或清除 API Key，以及无需重启的托盘语言更新。保存期间新增的编辑会保留为未保存草稿。
+同时检查启动后立即打开设置、收起动画中重复点击托盘不会重新拉起、保存期间编辑或清除 API Key，以及无需重启的托盘语言更新。保存期间新增的编辑会保留为未保存草稿。
 
 ## Configuration / 配置
 

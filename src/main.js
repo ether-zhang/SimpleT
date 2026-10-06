@@ -27,6 +27,7 @@ const I18N = {
     outputPh: "翻译结果",
     translate: "翻译",
     settings: "设置",
+    closeTitle: "收起窗口",
     settingsTitle: "设置",
     urlLabel: "模型 URL（OpenAI 格式，以 /v1 结尾）",
     keyLabel: "API Key",
@@ -46,6 +47,7 @@ const I18N = {
     outputPh: "Translation",
     translate: "Translate",
     settings: "Settings",
+    closeTitle: "Hide window",
     settingsTitle: "Settings",
     urlLabel: "Model URL (OpenAI format, ends with /v1)",
     keyLabel: "API Key",
@@ -65,6 +67,7 @@ const I18N = {
     outputPh: "翻訳結果",
     translate: "翻訳",
     settings: "設定",
+    closeTitle: "ウィンドウを隠す",
     settingsTitle: "設定",
     urlLabel: "モデル URL（OpenAI 形式、/v1 で終わる）",
     keyLabel: "API キー",
@@ -84,6 +87,7 @@ const I18N = {
     outputPh: "번역 결과",
     translate: "번역",
     settings: "설정",
+    closeTitle: "창 숨기기",
     settingsTitle: "설정",
     urlLabel: "모델 URL (OpenAI 형식, /v1로 끝남)",
     keyLabel: "API 키",
@@ -103,6 +107,7 @@ const I18N = {
     outputPh: "Traduction",
     translate: "Traduire",
     settings: "Paramètres",
+    closeTitle: "Masquer la fenêtre",
     settingsTitle: "Paramètres",
     urlLabel: "URL du modèle (format OpenAI, se termine par /v1)",
     keyLabel: "Clé API",
@@ -122,6 +127,7 @@ const I18N = {
     outputPh: "Übersetzung",
     translate: "Übersetzen",
     settings: "Einstellungen",
+    closeTitle: "Fenster ausblenden",
     settingsTitle: "Einstellungen",
     urlLabel: "Modell-URL (OpenAI-Format, endet mit /v1)",
     keyLabel: "API-Schlüssel",
@@ -141,6 +147,7 @@ const I18N = {
     outputPh: "Traducción",
     translate: "Traducir",
     settings: "Ajustes",
+    closeTitle: "Ocultar ventana",
     settingsTitle: "Ajustes",
     urlLabel: "URL del modelo (formato OpenAI, termina en /v1)",
     keyLabel: "Clave API",
@@ -160,6 +167,7 @@ const I18N = {
     outputPh: "Перевод",
     translate: "Перевести",
     settings: "Настройки",
+    closeTitle: "Скрыть окно",
     settingsTitle: "Настройки",
     urlLabel: "URL модели (формат OpenAI, оканчивается на /v1)",
     keyLabel: "API-ключ",
@@ -190,6 +198,8 @@ function applyLocale(lang) {
   els.output.placeholder = t("outputPh");
   els.translateBtn.textContent = t("translate");
   els.openSettings.textContent = t("settings");
+  els.closeFlyout.title = t("closeTitle");
+  els.closeFlyout.setAttribute("aria-label", t("closeTitle"));
   els.settingsTitle.textContent = t("settingsTitle");
   els.lblUrl.textContent = t("urlLabel");
   els.lblKey.textContent = t("keyLabel");
@@ -484,6 +494,7 @@ async function persistLangs() {
 window.addEventListener("DOMContentLoaded", async () => {
   els = {
     card: document.querySelector(".card"),
+    closeFlyout: document.querySelector("#close-flyout"),
     pageTranslate: document.querySelector("#page-translate"),
     pageSettings: document.querySelector("#page-settings"),
     langA: document.querySelector("#lang-a"),
@@ -531,6 +542,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   ]);
 
   els.translateBtn.addEventListener("click", doTranslate);
+  els.closeFlyout.addEventListener("click", requestClose);
   els.cfgKey.addEventListener("input", () => {
     apiKeyChanged = true;
     apiKeyRevision++;
