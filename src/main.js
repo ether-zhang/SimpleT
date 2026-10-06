@@ -36,6 +36,7 @@ const I18N = {
     save: "保存",
     back: "返回翻译",
     saved: "已保存 ✓",
+    unsaved: "仍有未保存的更改",
     translating: "翻译中…",
   },
   en: {
@@ -54,6 +55,7 @@ const I18N = {
     save: "Save",
     back: "Back",
     saved: "Saved ✓",
+    unsaved: "Changes still need to be saved",
     translating: "Translating…",
   },
   ja: {
@@ -72,6 +74,7 @@ const I18N = {
     save: "保存",
     back: "戻る",
     saved: "保存しました ✓",
+    unsaved: "未保存の変更があります",
     translating: "翻訳中…",
   },
   ko: {
@@ -90,6 +93,7 @@ const I18N = {
     save: "저장",
     back: "뒤로",
     saved: "저장됨 ✓",
+    unsaved: "저장하지 않은 변경 사항이 있습니다",
     translating: "번역 중…",
   },
   fr: {
@@ -108,6 +112,7 @@ const I18N = {
     save: "Enregistrer",
     back: "Retour",
     saved: "Enregistré ✓",
+    unsaved: "Des modifications restent à enregistrer",
     translating: "Traduction…",
   },
   de: {
@@ -126,6 +131,7 @@ const I18N = {
     save: "Speichern",
     back: "Zurück",
     saved: "Gespeichert ✓",
+    unsaved: "Es gibt noch ungespeicherte Änderungen",
     translating: "Übersetzen…",
   },
   es: {
@@ -144,6 +150,7 @@ const I18N = {
     save: "Guardar",
     back: "Volver",
     saved: "Guardado ✓",
+    unsaved: "Quedan cambios sin guardar",
     translating: "Traduciendo…",
   },
   ru: {
@@ -162,6 +169,7 @@ const I18N = {
     save: "Сохранить",
     back: "Назад",
     saved: "Сохранено ✓",
+    unsaved: "Есть несохранённые изменения",
     translating: "Перевод…",
   },
 };
@@ -243,10 +251,54 @@ let translationInFlight = false;
 let apiKeyChanged = false;
 let apiKeyConfigured = false;
 let configLoadError = "";
+let flyoutGeneration = 0;
+let closeRequested = false;
+let currentPage = "translate";
+let focusFrame = null;
+let apiKeyRevision = 0;
+let configSaveInFlight = false;
+let configWriteQueue = Promise.resolve();
+let configStatusTimer = null;
 
 function updateApiKeyUI() {
-  els.cfgKey.placeholder = apiKeyConfigured ? "••••••••" : "sk-…";
-  els.cfgKeyClear.classList.toggle("hidden", !apiKeyConfigured);
+  els.cfgKey.placeholder = !apiKeyChanged && apiKeyConfigured ? "••••••••" : "sk-…";
+  const hasKey = apiKeyChanged ? Boolean(els.cfgKey.value.trim()) : apiKeyConfigured;
+  els.cfgKeyClear.classList.toggle("hidden", !hasKey);
+}
+
+function showConfigStatus(message, clearAfter = 0) {
+  clearTimeout(configStatusTimer);
+  configStatusTimer = null;
+  els.cfgStatus.textContent = message;
+  if (clearAfter) {
+    configStatusTimer = setTimeout(() => {
+      configStatusTimer = null;
+      els.cfgStatus.textContent = "";
+    }, clearAfter);
+  }
+}
+
+function queueConfigWrite(command, args) {
+  const pending = configWriteQueue.then(() => invoke(command, args));
+  configWriteQueue = pending.catch(() => {});
+  return pending;
+}
+
+function cancelPageFocus() {
+  if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+  focusFrame = null;
+}
+
+function requestClose() {
+  if (closeRequested) return;
+  closeRequested = true;
+  const generation = flyoutGeneration;
+  invoke("request_hide", { generation }).catch((error) => {
+    if (generation === flyoutGeneration) {
+      closeRequested = false;
+      els.status.textContent = String(error);
+    }
+  });
 }
 
 function cancelSlideInFrames() {
@@ -272,6 +324,7 @@ function prepareSlideIn(origin) {
 
 // 卡片从下方滑入（打开）
 function slideIn(origin) {
+  closeRequested = false;
   clearTimeout(hideTimer);
   hideTimer = null;
   cancelSlideInFrames();
@@ -287,24 +340,29 @@ function slideIn(origin) {
 }
 
 // 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
-function slideOutThenHide() {
-  if (hideTimer) return; // 已在收起中
+function slideOutThenHide(generation) {
+  if (generation !== flyoutGeneration || hideTimer !== null) return;
+  closeRequested = true;
+  cancelPageFocus();
   cancelSlideInFrames();
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
     hideTimer = null;
-    invoke("commit_hide").catch((e) => {
-      els.status.textContent = String(e);
+    invoke("commit_hide", { generation }).catch((e) => {
+      if (generation === flyoutGeneration) els.status.textContent = String(e);
     });
   }, CLOSE_MS + 40);
 }
 
 function showPage(page) {
   const isSettings = page === "settings";
+  currentPage = isSettings ? "settings" : "translate";
   els.pageTranslate.classList.toggle("hidden", isSettings);
   els.pageSettings.classList.toggle("hidden", !isSettings);
   // 显示后立刻聚焦输入框，让中文输入法候选框贴着光标出现（修复其跑到左上角的问题）
-  requestAnimationFrame(() => {
+  cancelPageFocus();
+  focusFrame = requestAnimationFrame(() => {
+    focusFrame = null;
     (isSettings ? els.cfgUrl : els.input).focus();
   });
 }
@@ -359,11 +417,13 @@ async function loadConfigIntoUI() {
   els.cfgUiLang.value = cfg.ui_lang || "zh";
   applyLocale(els.cfgUiLang.value);
   configLoadError = cfg.load_error || "";
-  els.cfgStatus.textContent = configLoadError;
+  showConfigStatus(configLoadError);
   els.status.textContent = configLoadError;
 }
 
 async function saveConfig() {
+  if (configSaveInFlight) return;
+  const keyRevision = apiKeyRevision;
   const config = {
     base_url: els.cfgUrl.value.trim(),
     api_key: apiKeyChanged ? els.cfgKey.value.trim() : null,
@@ -372,38 +432,47 @@ async function saveConfig() {
     lang_b: els.langB.value,
     ui_lang: els.cfgUiLang.value,
   };
+  configSaveInFlight = true;
+  els.cfgSave.disabled = true;
   try {
-    await invoke("save_config", { config });
-    if (apiKeyChanged) {
+    await queueConfigWrite("save_config", { config });
+    const manualDraftUnchanged = apiKeyRevision === keyRevision
+      && els.cfgUrl.value.trim() === config.base_url
+      && els.cfgModel.value.trim() === config.model;
+    if (config.api_key !== null) {
       apiKeyConfigured = Boolean(config.api_key);
+    }
+    if (apiKeyRevision === keyRevision) {
       apiKeyChanged = false;
       els.cfgKey.value = "";
-      updateApiKeyUI();
     }
-    els.cfgStatus.textContent = t("saved");
+    updateApiKeyUI();
+    showConfigStatus(t(manualDraftUnchanged ? "saved" : "unsaved"), manualDraftUnchanged ? 1500 : 0);
     if (configLoadError && els.status.textContent === configLoadError) {
       els.status.textContent = "";
     }
     configLoadError = "";
-    setTimeout(() => (els.cfgStatus.textContent = ""), 1500);
   } catch (e) {
-    els.cfgStatus.textContent = String(e);
+    showConfigStatus(String(e));
+  } finally {
+    configSaveInFlight = false;
+    els.cfgSave.disabled = false;
   }
 }
 
 // 界面语言切换后立即持久化
 async function persistUiLang() {
   try {
-    await invoke("save_ui_lang", { uiLang: els.cfgUiLang.value });
+    await queueConfigWrite("save_ui_lang", { uiLang: els.cfgUiLang.value });
   } catch (e) {
-    els.cfgStatus.textContent = String(e);
+    showConfigStatus(String(e));
   }
 }
 
 // 语言切换后，把当前选择持久化，方便下次启动恢复
 async function persistLangs() {
   try {
-    await invoke("save_languages", {
+    await queueConfigWrite("save_languages", {
       langA: els.langA.value,
       langB: els.langB.value,
     });
@@ -443,27 +512,33 @@ window.addEventListener("DOMContentLoaded", async () => {
   fillLangSelect(els.langA);
   fillLangSelect(els.langB);
   fillUiLangSelect(els.cfgUiLang);
+  els.langA.value = "Chinese";
+  els.langB.value = "English";
+  els.cfgUiLang.value = "zh";
+  applyLocale("zh");
+  updateApiKeyUI();
 
   await Promise.all([
     listen("navigate", (e) => {
       const payload = e.payload;
       const page = typeof payload === "string" ? payload : payload?.page;
       const origin = typeof payload === "string" ? "bottom" : payload?.origin;
+      flyoutGeneration = payload?.generation ?? flyoutGeneration;
       showPage(page || "translate");
       slideIn(origin || "bottom");
     }),
-    listen("flyout-hide", () => slideOutThenHide()),
+    listen("flyout-hide", (e) => slideOutThenHide(e.payload?.generation)),
   ]);
-
-  await loadConfigIntoUI();
 
   els.translateBtn.addEventListener("click", doTranslate);
   els.cfgKey.addEventListener("input", () => {
     apiKeyChanged = true;
+    apiKeyRevision++;
+    updateApiKeyUI();
   });
   els.cfgKeyClear.addEventListener("click", () => {
-    apiKeyConfigured = false;
     apiKeyChanged = true;
+    apiKeyRevision++;
     els.cfgKey.value = "";
     updateApiKeyUI();
   });
@@ -503,9 +578,22 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Esc 收起浮窗（带下滑动画）
   document.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === "Escape") slideOutThenHide();
+    if (e.key === "Escape") requestClose();
   });
 
-  // 初始停在翻译页（此时窗口隐藏、卡片未滑入）
-  showPage("translate");
+  try {
+    await loadConfigIntoUI();
+  } catch (error) {
+    configLoadError = String(error);
+    showConfigStatus(configLoadError);
+    els.status.textContent = configLoadError;
+  }
+  showPage(currentPage);
+  // Only acknowledge readiness after listeners, controls and configuration are
+  // initialized. Rust then delivers any tray navigation requested during startup.
+  try {
+    await invoke("frontend_ready");
+  } catch (error) {
+    els.status.textContent = String(error);
+  }
 });

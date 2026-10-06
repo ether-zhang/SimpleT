@@ -194,14 +194,97 @@ impl AppState {
 #[derive(Default)]
 struct FocusState {
     focused_since_show: bool,
+    ready: bool,
+    visible: bool,
+    closing: bool,
+    generation: u32,
+    pending_page: Option<String>,
+    current_page: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+enum FlyoutAction {
+    Show,
+    Hide,
+    Pending,
 }
 
 impl FocusState {
-    fn prepare_show(&mut self) {
+    fn prepare_show(&mut self) -> u32 {
+        self.generation = self.generation.wrapping_add(1);
+        self.visible = true;
+        self.closing = false;
         self.focused_since_show = false;
+        self.generation
+    }
+
+    fn request_show(&mut self, page: &str, already_focused: bool) -> Option<u32> {
+        if !self.ready {
+            self.pending_page = Some(page.to_owned());
+            return None;
+        }
+        self.current_page = Some(page.to_owned());
+        let generation = self.prepare_show();
+        self.focused_since_show = already_focused;
+        Some(generation)
+    }
+
+    fn frontend_ready(&mut self) -> Option<String> {
+        self.ready = true;
+        self.pending_page.take().or_else(|| {
+            if self.visible {
+                self.current_page.clone()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn toggle(&mut self) -> FlyoutAction {
+        if !self.ready {
+            self.pending_page = if self.pending_page.is_some() {
+                None
+            } else {
+                Some("translate".into())
+            };
+            FlyoutAction::Pending
+        } else if self.visible && !self.closing {
+            FlyoutAction::Hide
+        } else {
+            FlyoutAction::Show
+        }
+    }
+
+    fn request_hide(&mut self, expected_generation: Option<u32>) -> Option<u32> {
+        if expected_generation.is_some_and(|value| value != self.generation) {
+            return None;
+        }
+        if !self.visible {
+            self.pending_page = None;
+            return None;
+        }
+        if self.closing {
+            return None;
+        }
+        self.closing = true;
+        self.focused_since_show = false;
+        Some(self.generation)
+    }
+
+    fn commit_hide(&mut self, generation: u32) -> bool {
+        if generation != self.generation || !self.visible || !self.closing {
+            return false;
+        }
+        self.visible = false;
+        self.closing = false;
+        self.focused_since_show = false;
+        true
     }
 
     fn changed(&mut self, focused: bool) -> bool {
+        if !self.visible || self.closing {
+            return false;
+        }
         if focused {
             self.focused_since_show = true;
             false
@@ -300,11 +383,60 @@ fn update_config(
     update: impl FnOnce(&mut Config),
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut config = state
-        .config
-        .lock()
-        .map_err(|_| "配置状态不可用".to_string())?;
-    config.save(&config_path(app)?, allow_recovery, update)
+    let locale = {
+        let mut config = state
+            .config
+            .lock()
+            .map_err(|_| "配置状态不可用".to_string())?;
+        let previous_locale = config.current.ui_lang.clone();
+        config.save(&config_path(app)?, allow_recovery, update)?;
+        (previous_locale != config.current.ui_lang).then(|| config.current.ui_lang.clone())
+    };
+    if let Some(locale) = locale {
+        // The config is already saved. A tray refresh failure must not report
+        // the disk write as failed or discard a successfully saved key draft.
+        if let Err(error) = refresh_tray_locale(app, &locale) {
+            eprintln!("SimpleT: failed to refresh tray language: {error}");
+        }
+    }
+    Ok(())
+}
+
+struct TrayMenu {
+    translate: MenuItem<tauri::Wry>,
+    settings: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+fn tray_labels(ui_lang: &str) -> (&'static str, &'static str, &'static str, &'static str) {
+    match ui_lang {
+        "en" => ("Translate", "Settings", "Quit", "SimpleT Translate"),
+        "ja" => ("翻訳", "設定", "終了", "SimpleT 翻訳"),
+        "ko" => ("번역", "설정", "종료", "SimpleT 번역"),
+        "fr" => ("Traduire", "Paramètres", "Quitter", "SimpleT Traduction"),
+        "de" => (
+            "Übersetzen",
+            "Einstellungen",
+            "Beenden",
+            "SimpleT Übersetzung",
+        ),
+        "es" => ("Traducir", "Ajustes", "Salir", "SimpleT Traducción"),
+        "ru" => ("Перевести", "Настройки", "Выход", "SimpleT Перевод"),
+        _ => ("翻译", "设置", "退出", "SimpleT 翻译"),
+    }
+}
+
+fn refresh_tray_locale(app: &tauri::AppHandle, ui_lang: &str) -> tauri::Result<()> {
+    let (translate, settings, quit, tooltip) = tray_labels(ui_lang);
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        menu.translate.set_text(translate)?;
+        menu.settings.set_text(settings)?;
+        menu.quit.set_text(quit)?;
+    }
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_tooltip(Some(tooltip))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -334,16 +466,64 @@ fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Resu
     })
 }
 
-// Actually hide the OS window. The frontend calls this once the slide-down
-// animation has finished, so the retract is visible before the window vanishes.
+fn request_flyout_hide(app: &tauri::AppHandle, expected_generation: Option<u32>) {
+    let generation = app
+        .state::<AppState>()
+        .focus
+        .lock()
+        .ok()
+        .and_then(|mut focus| focus.request_hide(expected_generation));
+    if let (Some(generation), Some(window)) = (generation, app.get_webview_window("main")) {
+        let _ = window.emit(
+            "flyout-hide",
+            serde_json::json!({ "generation": generation }),
+        );
+    }
+}
+
 #[tauri::command]
-fn commit_hide(app: tauri::AppHandle) {
-    if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-        focus.prepare_show();
-    }
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
-    }
+fn frontend_ready(app: tauri::AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let page = handle
+            .state::<AppState>()
+            .focus
+            .lock()
+            .ok()
+            .and_then(|mut focus| focus.frontend_ready());
+        if let Some(page) = page {
+            show_page(&handle, &page);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn request_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || request_flyout_hide(&handle, Some(generation)))
+        .map_err(|error| error.to_string())
+}
+
+// Validate the opening generation on the UI thread, where showing and hiding
+// are serialized. A delayed close must never hide a freshly reopened window.
+#[tauri::command]
+fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let should_hide = handle
+            .state::<AppState>()
+            .focus
+            .lock()
+            .map(|mut focus| focus.commit_hide(generation))
+            .unwrap_or(false);
+        if should_hide {
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -661,11 +841,7 @@ fn install_macos_outside_click_monitor(app: tauri::AppHandle) -> bool {
     let handler = block2::RcBlock::new(move |_event: NonNull<NSEvent>| {
         // Global mouse monitors receive clicks in other apps, even if our
         // non-activating panel never acquired keyboard focus.
-        if let Some(window) = app.get_webview_window("main") {
-            if window.is_visible().unwrap_or(false) {
-                let _ = window.emit("flyout-hide", ());
-            }
-        }
+        request_flyout_hide(&app, None);
     });
     let mask =
         NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
@@ -826,11 +1002,18 @@ fn to_flyout_panel(w: &tauri::WebviewWindow) -> Option<tauri_nspanel::PanelHandl
 
 fn show_page(app: &tauri::AppHandle, page: &str) {
     if let Some(w) = app.get_webview_window("main") {
+        let already_focused = w.is_focused().unwrap_or(false);
+        let generation = app
+            .state::<AppState>()
+            .focus
+            .lock()
+            .ok()
+            .and_then(|mut focus| focus.request_show(page, already_focused));
+        let Some(generation) = generation else {
+            return;
+        };
         #[cfg(target_os = "macos")]
         {
-            if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-                focus.prepare_show();
-            }
             let target = locate_macos_flyout();
             #[cfg(debug_assertions)]
             if target.is_none() {
@@ -860,15 +1043,13 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                 serde_json::json!({
                     "page": page,
                     "origin": FlyoutOrigin::Top.as_str(),
+                    "generation": generation,
                 }),
             );
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            if let Ok(mut focus) = app.state::<AppState>().focus.lock() {
-                focus.prepare_show();
-            }
             let origin = position_flyout(&w, last_tray_rect(app));
             let _ = w.show();
             let _ = w.unminimize();
@@ -879,6 +1060,7 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                 serde_json::json!({
                     "page": page,
                     "origin": origin.as_str(),
+                    "generation": generation,
                 }),
             );
         }
@@ -900,6 +1082,8 @@ pub fn run() {
             save_ui_lang,
             save_languages,
             translate,
+            frontend_ready,
+            request_hide,
             commit_hide
         ])
         .setup(|app| {
@@ -925,27 +1109,18 @@ pub fn run() {
 
             // Localize the tray menu from the saved UI language.
             let (translate_label, settings_label, quit_label, tooltip) =
-                match initial_config.ui_lang.as_str() {
-                    "en" => ("Translate", "Settings", "Quit", "SimpleT Translate"),
-                    "ja" => ("翻訳", "設定", "終了", "SimpleT 翻訳"),
-                    "ko" => ("번역", "설정", "종료", "SimpleT 번역"),
-                    "fr" => ("Traduire", "Paramètres", "Quitter", "SimpleT Traduction"),
-                    "de" => (
-                        "Übersetzen",
-                        "Einstellungen",
-                        "Beenden",
-                        "SimpleT Übersetzung",
-                    ),
-                    "es" => ("Traducir", "Ajustes", "Salir", "SimpleT Traducción"),
-                    "ru" => ("Перевести", "Настройки", "Выход", "SimpleT Перевод"),
-                    _ => ("翻译", "设置", "退出", "SimpleT 翻译"),
-                };
+                tray_labels(&initial_config.ui_lang);
             let translate_i =
                 MenuItem::with_id(app, "translate", translate_label, true, None::<&str>)?;
             let settings_i =
                 MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&translate_i, &settings_i, &quit_i])?;
+            app.manage(TrayMenu {
+                translate: translate_i,
+                settings: settings_i,
+                quit: quit_i,
+            });
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -975,19 +1150,20 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let Some(w) = app.get_webview_window("main") else {
-                            return;
-                        };
-
-                        // The close animation keeps the window visible while it
-                        // slides down, so `is_visible` still reflects "open" here:
-                        // open -> ask the frontend to slide it out; closed -> show.
-                        if w.is_visible().unwrap_or(false) {
-                            #[cfg(target_os = "macos")]
-                            discard_macos_click_target();
-                            let _ = w.emit("flyout-hide", ());
-                        } else {
-                            show_page(app, "translate");
+                        let action = app
+                            .state::<AppState>()
+                            .focus
+                            .lock()
+                            .map(|mut focus| focus.toggle())
+                            .unwrap_or(FlyoutAction::Pending);
+                        match action {
+                            FlyoutAction::Show => show_page(app, "translate"),
+                            FlyoutAction::Hide => {
+                                #[cfg(target_os = "macos")]
+                                discard_macos_click_target();
+                                request_flyout_hide(app, None);
+                            }
+                            FlyoutAction::Pending => {}
                         }
                     }
                 })
@@ -998,11 +1174,16 @@ pub fn run() {
             // No title bar, but Alt+F4 etc. still request close: hide, don't quit.
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = _window.emit("flyout-hide", ());
+                request_flyout_hide(_window.app_handle(), None);
             }
             // Ignore startup blur noise until the shown window has actually
             // received focus. A real focus loss then requests exactly one hide.
             tauri::WindowEvent::Focused(focused) => {
+                // A queued blur from the previous opening may arrive after the
+                // same native window has regained focus.
+                if !focused && _window.is_focused().unwrap_or(false) {
+                    return;
+                }
                 let should_hide = _window
                     .state::<AppState>()
                     .focus
@@ -1010,7 +1191,7 @@ pub fn run() {
                     .map(|mut focus| focus.changed(*focused))
                     .unwrap_or(false);
                 if should_hide {
-                    let _ = _window.emit("flyout-hide", ());
+                    request_flyout_hide(_window.app_handle(), None);
                 }
             }
             _ => {}
@@ -1024,10 +1205,84 @@ mod tests {
     use super::{
         apply_config_update, extract_translation, macos_flyout_top_left, read_config_from_path,
         translation_request_body, translation_system_prompt, translation_user_message,
-        write_config_to_path, Config, ConfigState, ConfigUpdate, FocusState, MacosRect,
+        write_config_to_path, Config, ConfigState, ConfigUpdate, FlyoutAction, FocusState,
+        MacosRect,
     };
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn startup_navigation_waits_for_the_frontend_and_keeps_the_last_page() {
+        let mut state = FocusState::default();
+        assert_eq!(state.request_show("translate", false), None);
+        assert_eq!(state.request_show("settings", false), None);
+        assert!(!state.visible);
+        assert_eq!(state.frontend_ready().as_deref(), Some("settings"));
+        assert!(state.request_show("settings", false).is_some());
+        assert!(state.visible);
+    }
+
+    #[test]
+    fn repeated_startup_tray_clicks_can_cancel_the_pending_open() {
+        let mut state = FocusState::default();
+        assert_eq!(state.toggle(), FlyoutAction::Pending);
+        assert_eq!(state.toggle(), FlyoutAction::Pending);
+        assert_eq!(state.frontend_ready(), None);
+        assert!(!state.visible);
+    }
+
+    #[test]
+    fn an_outside_click_cancels_a_startup_open() {
+        let mut state = FocusState::default();
+        state.request_show("settings", false);
+        assert_eq!(state.request_hide(None), None);
+        assert_eq!(state.frontend_ready(), None);
+    }
+
+    #[test]
+    fn reopening_invalidates_an_in_flight_close_commit() {
+        let mut state = FocusState::default();
+        state.frontend_ready();
+        let first = state.request_show("translate", false).unwrap();
+        assert_eq!(state.request_hide(Some(first)), Some(first));
+        assert_eq!(state.toggle(), FlyoutAction::Show);
+        let second = state.request_show("settings", false).unwrap();
+        assert_ne!(first, second);
+        assert!(!state.commit_hide(first));
+        assert!(state.visible);
+        assert!(!state.closing);
+        assert_eq!(state.request_hide(Some(second)), Some(second));
+        assert!(state.commit_hide(second));
+        assert!(!state.visible);
+    }
+
+    #[test]
+    fn duplicate_and_stale_hide_requests_are_ignored() {
+        let mut state = FocusState::default();
+        state.frontend_ready();
+        let first = state.request_show("translate", false).unwrap();
+        let second = state.request_show("settings", false).unwrap();
+        assert_eq!(state.request_hide(Some(first)), None);
+        assert!(!state.closing);
+        assert!(!state.commit_hide(second));
+        assert_eq!(state.request_hide(Some(second)), Some(second));
+        assert_eq!(state.request_hide(Some(second)), None);
+        assert!(state.commit_hide(second));
+        assert!(!state.commit_hide(second));
+    }
+
+    #[test]
+    fn reloaded_frontend_recovers_visible_navigation_and_cancels_old_closes() {
+        let mut state = FocusState::default();
+        state.frontend_ready();
+        let first = state.request_show("settings", false).unwrap();
+        state.request_hide(Some(first));
+        let page = state.frontend_ready().unwrap();
+        assert_eq!(page, "settings");
+        state.request_show(&page, false);
+        assert!(!state.commit_hide(first));
+        assert!(state.visible);
+    }
 
     #[test]
     fn missing_config_uses_defaults_without_creating_a_file() {
@@ -1190,6 +1445,16 @@ mod tests {
         let message: serde_json::Value =
             serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
         assert_eq!(message, json!({ "source_text": source }));
+    }
+
+    #[test]
+    fn switching_pages_in_an_already_focused_window_keeps_blur_detection() {
+        let mut state = FocusState::default();
+        state.frontend_ready();
+        state.request_show("translate", false);
+        state.changed(true);
+        state.request_show("settings", true);
+        assert!(state.changed(false));
     }
 
     #[test]

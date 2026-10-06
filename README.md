@@ -60,6 +60,10 @@ Before a macOS release, verify on a real Mac: left/right tray clicks, immediate 
 
 发布 macOS 版本前，请在真机验证托盘左右键、打开后输入、中文输入法、Esc、点击外部收起、重新打开，以及不同缩放的多屏和全屏空间。这些 AppKit 行为无法通过 Windows 测试验证。
 
+Also check opening Settings immediately after launch, reopening during the close animation, editing or clearing an API key while saving, and changing the tray menu language without restarting. Edits made during a save remain as unsaved drafts.
+
+同时检查启动后立即打开设置、收起动画中重新打开浮窗、保存期间编辑或清除 API Key，以及无需重启的托盘语言更新。保存期间新增的编辑会保留为未保存草稿。
+
 ## Configuration / 配置
 
 Open the tray menu settings and fill in:
