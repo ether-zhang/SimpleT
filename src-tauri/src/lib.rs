@@ -1,6 +1,7 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::Write,
+    path::{Path, PathBuf},
     sync::Mutex,
     time::Duration,
 };
@@ -12,7 +13,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -87,6 +88,7 @@ struct ConfigView {
     lang_b: String,
     ui_lang: String,
     api_key_configured: bool,
+    load_error: Option<String>,
 }
 
 impl From<&Config> for ConfigView {
@@ -98,6 +100,7 @@ impl From<&Config> for ConfigView {
             lang_b: config.lang_b.clone(),
             ui_lang: config.ui_lang.clone(),
             api_key_configured: !config.api_key.trim().is_empty(),
+            load_error: None,
         }
     }
 }
@@ -124,15 +127,61 @@ fn apply_config_update(current: &mut Config, update: ConfigUpdate) {
 }
 
 #[derive(Default)]
+struct ConfigState {
+    current: Config,
+    load_error: Option<String>,
+}
+
+impl ConfigState {
+    fn new(loaded: Result<Config, String>) -> Self {
+        match loaded {
+            Ok(current) => Self {
+                current,
+                load_error: None,
+            },
+            Err(error) => Self {
+                current: Config::default(),
+                load_error: Some(error),
+            },
+        }
+    }
+
+    fn view(&self) -> ConfigView {
+        let mut view = ConfigView::from(&self.current);
+        view.load_error = self.load_error.clone();
+        view
+    }
+
+    fn save(
+        &mut self,
+        path: &Path,
+        allow_recovery: bool,
+        update: impl FnOnce(&mut Config),
+    ) -> Result<(), String> {
+        if !allow_recovery {
+            if let Some(error) = &self.load_error {
+                return Err(error.clone());
+            }
+        }
+        let mut next = self.current.clone();
+        update(&mut next);
+        write_config_to_path(path, &next)?;
+        self.current = next;
+        self.load_error = None;
+        Ok(())
+    }
+}
+
+#[derive(Default)]
 struct AppState {
     #[cfg(not(target_os = "macos"))]
     last_rect: Mutex<Option<Rect>>,
-    config: Mutex<Config>,
+    config: Mutex<ConfigState>,
     focus: Mutex<FocusState>,
 }
 
 impl AppState {
-    fn new(config: Config) -> Self {
+    fn new(config: ConfigState) -> Self {
         Self {
             #[cfg(not(target_os = "macos"))]
             last_rect: Mutex::new(None),
@@ -195,83 +244,91 @@ impl Default for Config {
     }
 }
 
-fn config_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("config.json")
+        .map(|dir| dir.join("config.json"))
+        .map_err(|e| format!("无法定位配置目录：{e}"))
 }
 
-fn read_config(app: &tauri::AppHandle) -> Config {
-    fs::read_to_string(config_path(app))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+fn read_config_from_path(path: &Path) -> Result<Config, String> {
+    match fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json)
+            .map_err(|e| format!("配置文件无法解析，请在设置中检查并保存完整配置：{e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(e) => Err(format!("读取配置失败，请在设置中检查并保存完整配置：{e}")),
+    }
+}
+
+fn read_config(app: &tauri::AppHandle) -> Result<Config, String> {
+    read_config_from_path(&config_path(app)?)
 }
 
 fn config_snapshot(app: &tauri::AppHandle) -> Config {
     app.state::<AppState>()
         .config
         .lock()
-        .map(|config| config.clone())
+        .map(|config| config.current.clone())
         .unwrap_or_default()
 }
 
-fn write_config(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+fn write_config_to_path(path: &Path, config: &Config) -> Result<(), String> {
+    let dir = path.parent().ok_or("配置文件缺少父目录")?;
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
     #[cfg(unix)]
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
 
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    let mut options = OpenOptions::new();
-    options.create(true).truncate(true).write(true);
+    // Preserve the old config until the same-directory replacement is ready.
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
     #[cfg(unix)]
-    options.mode(0o600);
+    file.as_file()
+        .set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
 
-    let path = dir.join("config.json");
-    let mut file = options.open(&path).map_err(|e| e.to_string())?;
     file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
-
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    file.persist(path).map_err(|e| e.error.to_string())?;
 
     Ok(())
 }
 
-fn update_config(app: &tauri::AppHandle, update: impl FnOnce(&mut Config)) -> Result<(), String> {
+fn update_config(
+    app: &tauri::AppHandle,
+    allow_recovery: bool,
+    update: impl FnOnce(&mut Config),
+) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut current = state
+    let mut config = state
         .config
         .lock()
         .map_err(|_| "配置状态不可用".to_string())?;
-    let mut next = current.clone();
-    update(&mut next);
-    write_config(app, &next)?;
-    *current = next;
-    Ok(())
+    config.save(&config_path(app)?, allow_recovery, update)
 }
 
 #[tauri::command]
 fn load_config(app: tauri::AppHandle) -> ConfigView {
-    ConfigView::from(&config_snapshot(&app))
+    app.state::<AppState>()
+        .config
+        .lock()
+        .map(|config| config.view())
+        .unwrap_or_else(|_| ConfigState::new(Err("配置状态不可用".into())).view())
 }
 
 #[tauri::command]
 fn save_config(app: tauri::AppHandle, config: ConfigUpdate) -> Result<(), String> {
-    update_config(&app, |current| apply_config_update(current, config))
+    update_config(&app, true, |current| apply_config_update(current, config))
 }
 
 #[tauri::command]
 fn save_ui_lang(app: tauri::AppHandle, ui_lang: String) -> Result<(), String> {
-    update_config(&app, |config| config.ui_lang = ui_lang)
+    update_config(&app, false, |config| config.ui_lang = ui_lang)
 }
 
 #[tauri::command]
 fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Result<(), String> {
-    update_config(&app, |config| {
+    update_config(&app, false, |config| {
         config.lang_a = lang_a;
         config.lang_b = lang_b;
     })
@@ -304,18 +361,8 @@ async fn translate(
         return Ok(String::new());
     }
 
-    let system = translation_system_prompt(&lang_a, &lang_b);
-    let user_message = translation_user_message(&text);
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "model": cfg.model,
-        "messages": [
-            { "role": "system", "content": system },
-            { "role": "user", "content": user_message }
-        ],
-        "temperature": 0.2,
-        "stream": false
-    });
+    let body = translation_request_body(&cfg.model, &text, &lang_a, &lang_b);
 
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -347,6 +394,23 @@ async fn translate(
     let value: serde_json::Value =
         serde_json::from_str(&response_text).map_err(|e| format!("解析响应失败：{e}"))?;
     extract_translation(&value)
+}
+
+fn translation_request_body(
+    model: &str,
+    text: &str,
+    lang_a: &str,
+    lang_b: &str,
+) -> serde_json::Value {
+    // Some reasoning models reject sampling parameters. Use provider defaults.
+    serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": translation_system_prompt(lang_a, lang_b) },
+            { "role": "user", "content": translation_user_message(text) }
+        ],
+        "stream": false
+    })
 }
 
 fn extract_translation(value: &serde_json::Value) -> Result<String, String> {
@@ -517,6 +581,7 @@ struct MacosClickTarget {
 thread_local! {
     static MACOS_CLICK_TARGET: Cell<Option<MacosClickTarget>> = const { Cell::new(None) };
     static MACOS_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
+    static MACOS_OUTSIDE_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
 }
 
 #[cfg(target_os = "macos")]
@@ -585,6 +650,29 @@ fn install_macos_click_monitor() -> bool {
     if let Some(monitor) = monitor {
         // Keep the removal token on the main thread for the app lifetime.
         MACOS_CLICK_MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_outside_click_monitor(app: tauri::AppHandle) -> bool {
+    let handler = block2::RcBlock::new(move |_event: NonNull<NSEvent>| {
+        // Global mouse monitors receive clicks in other apps, even if our
+        // non-activating panel never acquired keyboard focus.
+        if let Some(window) = app.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.emit("flyout-hide", ());
+            }
+        }
+    });
+    let mask =
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    // AppKit invokes this mouse-only observer on the main thread.
+    let monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &handler);
+    if let Some(monitor) = monitor {
+        MACOS_OUTSIDE_CLICK_MONITOR.with(|slot| *slot.borrow_mut() = Some(monitor));
         true
     } else {
         false
@@ -697,12 +785,9 @@ mod flyout_panel {
         panel!(FlyoutPanel {
             config: {
                 can_become_key_window: true,
-                // Become key only when a control actually needs input, not on
-                // show. Forcing key at show time made this accessory app read
-                // as "activated" in a full-screen Space and hid the menu bar
-                // (Apple FB13544993), which visually detached the dropdown from
-                // its menu-bar anchor.
-                becomes_key_only_if_needed: true,
+                // WebView textareas do not declare needsPanelToBecomeKey to
+                // AppKit. Allow clicks to restore keyboard focus to the panel.
+                becomes_key_only_if_needed: false,
                 is_floating_panel: true,
             }
         })
@@ -754,13 +839,15 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             if let Some(target) = target {
                 position_macos_flyout(&w, target);
             }
-            // Show as a key non-activating panel: keyboard/IME focus without
-            // activating the app or dragging the window to another Space/screen.
-            // show() (orderFrontRegardless) without forcing key: with
-            // becomes_key_only_if_needed the panel takes key when the user
-            // focuses the input, so the menu bar isn't disturbed on open.
+            // Restore the WebView as first responder after changing the window
+            // style, then focus the non-activating panel for keyboard/IME input.
             match to_flyout_panel(&w) {
-                Some(panel) => panel.show(),
+                Some(panel) => {
+                    panel.show();
+                    let webview: &tauri::Webview = w.as_ref();
+                    let _ = webview.set_focus();
+                    panel.make_key_window();
+                }
                 None => {
                     let _ = w.show();
                     let _ = w.set_focus();
@@ -816,8 +903,9 @@ pub fn run() {
             commit_hide
         ])
         .setup(|app| {
-            let initial_config = read_config(app.handle());
-            app.manage(AppState::new(initial_config.clone()));
+            let config = ConfigState::new(read_config(app.handle()));
+            let initial_config = config.current.clone();
+            app.manage(AppState::new(config));
             #[cfg(target_os = "macos")]
             {
                 // Prohibited (not Accessory): the app must never activate. The
@@ -828,6 +916,10 @@ pub fn run() {
                 if !install_macos_click_monitor() {
                     #[cfg(debug_assertions)]
                     eprintln!("SimpleT screen-capture: failed to install local event monitor");
+                }
+                if !install_macos_outside_click_monitor(app.handle().clone()) {
+                    #[cfg(debug_assertions)]
+                    eprintln!("SimpleT: failed to install outside-click monitor");
                 }
             }
 
@@ -930,10 +1022,175 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_config_update, extract_translation, macos_flyout_top_left, translation_system_prompt,
-        translation_user_message, Config, ConfigUpdate, FocusState, MacosRect,
+        apply_config_update, extract_translation, macos_flyout_top_left, read_config_from_path,
+        translation_request_body, translation_system_prompt, translation_user_message,
+        write_config_to_path, Config, ConfigState, ConfigUpdate, FocusState, MacosRect,
     };
     use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn missing_config_uses_defaults_without_creating_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = read_config_from_path(&path).unwrap();
+
+        assert_eq!(config.lang_a, "Chinese");
+        assert!(config.api_key.is_empty());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn older_config_without_ui_language_remains_loadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut json = serde_json::to_value(Config::default()).unwrap();
+        json.as_object_mut().unwrap().remove("ui_lang");
+        fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        assert_eq!(read_config_from_path(&path).unwrap().ui_lang, "zh");
+    }
+
+    #[test]
+    fn unreadable_config_is_reported_instead_of_using_defaults_silently() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_config_from_path(dir.path()).is_err());
+    }
+
+    #[test]
+    fn corrupt_config_blocks_autosave_until_explicit_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let damaged = "{unfinished config";
+        fs::write(&path, damaged).unwrap();
+        let mut state = ConfigState::new(read_config_from_path(&path));
+
+        assert!(state.view().load_error.is_some());
+        assert!(state
+            .save(&path, false, |cfg| cfg.ui_lang = "en".into())
+            .is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
+        assert_eq!(state.current.ui_lang, "zh");
+
+        state
+            .save(&path, true, |cfg| cfg.api_key = "new-key".into())
+            .unwrap();
+        assert!(state.view().load_error.is_none());
+        assert!(state.view().api_key_configured);
+        assert_eq!(read_config_from_path(&path).unwrap().api_key, "new-key");
+        state
+            .save(&path, false, |cfg| cfg.ui_lang = "en".into())
+            .unwrap();
+        assert_eq!(read_config_from_path(&path).unwrap().ui_lang, "en");
+    }
+
+    #[test]
+    fn config_replacement_preserves_all_values_and_leaves_no_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut config = Config {
+            api_key: "old-key".into(),
+            ..Config::default()
+        };
+        write_config_to_path(&path, &config).unwrap();
+        config.api_key = "new-key".into();
+        config.ui_lang = "en".into();
+        write_config_to_path(&path, &config).unwrap();
+
+        let loaded = read_config_from_path(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded).unwrap(),
+            serde_json::to_value(&config).unwrap()
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_config_replacement_keeps_state_and_existing_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::create_dir(&path).unwrap();
+        let original = path.join("original");
+        fs::write(&original, "keep me").unwrap();
+        let mut state = ConfigState::new(Ok(Config {
+            api_key: "old-key".into(),
+            ..Config::default()
+        }));
+
+        assert!(state
+            .save(&path, true, |cfg| cfg.api_key = "new-key".into())
+            .is_err());
+        assert_eq!(state.current.api_key, "old-key");
+        assert_eq!(fs::read_to_string(original).unwrap(), "keep me");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_config_is_not_truncated_when_replacement_fails() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = Config {
+            api_key: "old-key".into(),
+            ..Config::default()
+        };
+        write_config_to_path(&path, &config).unwrap();
+        let original = fs::read(&path).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let mut state = ConfigState::new(Ok(config));
+
+        assert!(state
+            .save(&path, true, |cfg| cfg.api_key = "new-key".into())
+            .is_err());
+        drop(lock);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(state.current.api_key, "old-key");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_replacement_keeps_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        write_config_to_path(&path, &Config::default()).unwrap();
+        write_config_to_path(&path, &Config::default()).unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn translation_request_uses_portable_parameters_and_preserves_source() {
+        let source = "hello\n\"quoted text\"";
+        let body = translation_request_body("reasoning-model", source, "English", "Chinese");
+
+        assert_eq!(body["model"], "reasoning-model");
+        assert_eq!(body["stream"], false);
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert!(body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("English to Chinese"));
+        let message: serde_json::Value =
+            serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(message, json!({ "source_text": source }));
+    }
 
     #[test]
     fn startup_blur_does_not_hide_before_focus() {
