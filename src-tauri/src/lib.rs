@@ -30,7 +30,7 @@ use objc2::{rc::Retained, runtime::AnyObject};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSEvent, NSEventMask, NSScreen, NSStatusWindowLevel, NSWindow};
 #[cfg(target_os = "macos")]
-use objc2_foundation::{MainThreadMarker, NSPoint};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSSize};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt as _};
 
@@ -1088,7 +1088,8 @@ pub fn run() {
             });
 
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tauri::include_image!("icons/tray.png"))
+                .icon_as_template(false)
                 .tooltip(tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -1133,6 +1134,22 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            #[cfg(target_os = "macos")]
+            if let Some(tray) = app.tray_by_id("main") {
+                // Use a compact logical size with the high-resolution tray image.
+                tray.with_inner_tray_icon(|inner| {
+                    let Some(mtm) = MainThreadMarker::new() else {
+                        return;
+                    };
+                    let Some(button) = inner.ns_status_item().and_then(|item| item.button(mtm))
+                    else {
+                        return;
+                    };
+                    if let Some(image) = button.image() {
+                        image.setSize(NSSize::new(17.6, 17.6));
+                    }
+                })?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

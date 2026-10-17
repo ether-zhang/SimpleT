@@ -22,7 +22,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["block2", "NSEvent", "NSResponder", "NSScreen", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", features = ["block2", "NSEvent", "NSImage", "NSResponder", "NSScreen", "NSStatusBarButton", "NSStatusItem", "NSWindow"] }
 objc2-foundation = "0.3.2"
 # Prototype: non-activating NSPanel so the flyout can become key (IME candidate
 # window) without activating the app / switching Spaces (cross-screen).
