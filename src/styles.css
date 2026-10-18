@@ -60,7 +60,8 @@ body {
   position: absolute;
   top: 3px;
   right: 3px;
-  z-index: 1;
+  /* Stay above page stacking contexts and language dropdowns. */
+  z-index: 4;
   display: grid;
   place-items: center;
   width: 16px;
