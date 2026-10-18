@@ -10,6 +10,7 @@ SimpleT 是一个轻量级桌面托盘翻译工具，基于 Tauri 构建。它�
 - OpenAI-compatible endpoint, API key, and model settings / 支持配置兼容 OpenAI 的接口、API Key 和模型名
 - Bidirectional language swap / 支持源语言和目标语言互换
 - Localized UI language selection / 支持界面语言切换
+- Local translation history: newest at the bottom, scroll upward for older entries / 本地翻译历史：最新记录在底部，向上滚动查看更早的记录
 - Persistent flyout: click the tray icon or × to hide it; clicking elsewhere keeps it open / 浮窗保持显示，点击托盘图标或 × 收起，点击其他位置不会收起
 
 ## Development / 开发
@@ -66,6 +67,10 @@ Also check opening Settings immediately after launch, repeated tray clicks durin
 同时检查启动后立即打开设置、收起动画中重复点击托盘不会重新拉起、保存期间编辑或清除 API Key，以及无需重启的托盘语言更新。保存期间新增的编辑会保留为未保存草稿。
 
 ## Configuration / 配置
+
+Successful translations are saved automatically to `history.json` in the application's local data directory. Use the history button below Settings to browse the original text, translation, languages, and time. History is loaded in batches as you scroll upward and is retained across restarts. Failed requests are not recorded. An unreadable history file is preserved and reported in the history page.
+
+成功的翻译会自动保存到应用本地数据目录下的 `history.json`。点击设置按钮下方的历史按钮，可以查看原文、译文、语言和时间。向上滚动时分批加载旧记录，重启后仍然保留；失败的请求不记入历史。历史文件无法读取时会保留原文件，并在历史页显示错误。
 
 Open the tray menu settings and fill in:
 

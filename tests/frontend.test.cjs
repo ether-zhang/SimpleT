@@ -27,7 +27,7 @@ async function createApp(config = {}, options = {}) {
     const attributes = new Map();
     return {
       id: selector.startsWith("#") ? selector.slice(1) : "",
-      children: [], hidden: false, scrollTop: 0, clientHeight: 400, offsetTop: 0,
+      children: [], hidden: false, scrollTop: 0, scrollHeight: 0, clientHeight: 400, offsetTop: 0,
       value: "", textContent: "", disabled: false,
       classList: {
         add(...names) { names.forEach((name) => classes.add(name)); },
@@ -52,6 +52,7 @@ async function createApp(config = {}, options = {}) {
         for (let node = target; node; node = node.parentElement) if (node === this) return true;
         return false;
       },
+      setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
       focus() { this.focused = true; }, offsetHeight: 28,
     };
   }
@@ -84,6 +85,7 @@ async function createApp(config = {}, options = {}) {
           if (command === "translate") return new Promise((resolve, reject) => {
             requests.push({ args, resolve, reject });
           });
+          if (command === "load_history") return { entries: [], has_more: false, save_error: null };
           if (command === "frontend_ready") events.get("navigate")?.({ payload: {
             page: options.initialPage || "translate", origin: "bottom", generation: 1,
           } });
@@ -141,6 +143,182 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
+function historyEntry(id, text = `source ${id}`) {
+  return {
+    id, created_at: 1792252800000 + id * 60000, source_text: text,
+    translation: `译文 ${id}`, lang_a: "English", lang_b: "Chinese",
+  };
+}
+
+function historyIds(app) {
+  return app.element("#history-list").children.map((child) => Number(child.getAttribute("data-history-id")));
+}
+
+function simulateHistoryHeight(app) {
+  const scroll = app.element("#history-scroll");
+  Object.defineProperty(scroll, "scrollHeight", { get: () =>
+    app.element("#history-list").children.length * 100
+      + (app.element("#history-more").classList.contains("hidden") ? 0 : 32),
+  });
+  scroll.clientHeight = 100;
+  return scroll;
+}
+
+test("history opens at the newest bottom entry and returning preserves the translation draft", async () => {
+  const app = await createApp({}, { invoke: {
+    load_history: async () => ({ entries: [historyEntry(4), historyEntry(5)], has_more: true }),
+  } });
+  const scroll = simulateHistoryHeight(app);
+  app.element("#input").value = "keep draft";
+  app.element("#output").value = "keep translation";
+  await app.element("#open-history").dispatch("click");
+  assert.equal(app.element("#page-translate").classList.contains("hidden"), true);
+  assert.equal(app.element("#page-settings").classList.contains("hidden"), true);
+  assert.equal(app.element("#page-history").classList.contains("hidden"), false);
+  assert.deepEqual(historyIds(app), [4, 5]);
+  assert.equal(scroll.scrollTop, scroll.scrollHeight);
+  assert.equal(app.element("#history-empty").classList.contains("hidden"), true);
+  app.flushFrames();
+  assert.equal(scroll.focused, true);
+  app.element("#history-back").dispatch("click");
+  assert.equal(app.element("#page-history").classList.contains("hidden"), true);
+  assert.equal(app.element("#input").value, "keep draft");
+  assert.equal(app.element("#output").value, "keep translation");
+});
+
+test("scrolling upward loads older entries once and preserves the reading position", async () => {
+  const older = deferred();
+  const app = await createApp({}, { invoke: {
+    load_history: async ({ before }) => before ? older.promise
+      : { entries: [historyEntry(4), historyEntry(5)], has_more: true },
+  } });
+  const scroll = simulateHistoryHeight(app);
+  await app.element("#open-history").dispatch("click");
+  scroll.scrollTop = 14;
+  scroll.dispatch("scroll");
+  scroll.dispatch("scroll");
+  assert.equal(app.commands.filter((call) => call.command === "load_history").length, 2);
+  assert.equal(app.commands.at(-1).args.before, 4);
+  assert.equal(scroll.getAttribute("aria-busy"), "true");
+  older.resolve({ entries: [historyEntry(2), historyEntry(3)], has_more: false });
+  await new Promise(setImmediate);
+  assert.deepEqual(historyIds(app), [2, 3, 4, 5]);
+  assert.equal(scroll.scrollTop, 14 + 200 - 32);
+  assert.equal(scroll.getAttribute("aria-busy"), "false");
+  assert.equal(app.element("#history-more").classList.contains("hidden"), true);
+});
+
+test("an empty history has a localized empty state and does not request older pages", async () => {
+  const app = await createApp({ ui_lang: "en" });
+  await app.element("#open-history").dispatch("click");
+  app.element("#history-scroll").dispatch("scroll");
+  assert.equal(app.element("#open-history").getAttribute("aria-label"), "History");
+  assert.equal(app.element("#history-title").textContent, "History");
+  assert.equal(app.element("#history-empty").textContent, "Completed translations will appear here");
+  assert.equal(app.element("#history-empty").classList.contains("hidden"), false);
+  assert.equal(app.commands.filter((call) => call.command === "load_history").length, 1);
+});
+
+test("history read errors can be retried without showing a misleading empty state", async () => {
+  let fail = true;
+  const app = await createApp({}, { invoke: {
+    load_history: async () => {
+      if (fail) throw "history file unreadable";
+      return { entries: [historyEntry(1)], has_more: false };
+    },
+  } });
+  await app.element("#open-history").dispatch("click");
+  assert.match(app.element("#history-status").textContent, /历史记录加载失败.*history file unreadable/);
+  assert.equal(app.element("#history-empty").classList.contains("hidden"), true);
+  assert.equal(app.element("#history-retry").classList.contains("hidden"), false);
+  fail = false;
+  await app.element("#history-retry").dispatch("click");
+  assert.deepEqual(historyIds(app), [1]);
+  assert.equal(app.element("#history-notice").classList.contains("hidden"), true);
+});
+
+test("a response from a previous history visit cannot replace the reopened page", async () => {
+  const old = deferred();
+  let count = 0;
+  const app = await createApp({}, { invoke: {
+    load_history: async () => ++count === 1 ? old.promise
+      : { entries: [historyEntry(9)], has_more: false },
+  } });
+  const firstVisit = app.element("#open-history").dispatch("click");
+  app.element("#history-back").dispatch("click");
+  await app.element("#open-history").dispatch("click");
+  old.resolve({ entries: [historyEntry(1)], has_more: true });
+  await firstVisit;
+  assert.deepEqual(historyIds(app), [9]);
+  assert.equal(app.element("#history-scroll").getAttribute("aria-busy"), "false");
+});
+
+test("translations completing during initial history loading are merged without duplicates", async () => {
+  const pending = deferred();
+  const app = await createApp({}, { invoke: { load_history: () => pending.promise } });
+  const loading = app.element("#open-history").dispatch("click");
+  app.emit("history-updated", { entry: historyEntry(2) });
+  app.emit("history-updated", { entry: historyEntry(3) });
+  pending.resolve({ entries: [historyEntry(1), historyEntry(2)], has_more: false });
+  await loading;
+  assert.deepEqual(historyIds(app), [1, 2, 3]);
+});
+
+test("live history follows the bottom while leaving an older reading position alone", async () => {
+  const app = await createApp({}, { invoke: {
+    load_history: async () => ({ entries: [historyEntry(1), historyEntry(2)], has_more: false }),
+  } });
+  const scroll = simulateHistoryHeight(app);
+  await app.element("#open-history").dispatch("click");
+  scroll.scrollTop = scroll.scrollHeight - scroll.clientHeight;
+  app.emit("history-updated", { entry: historyEntry(3) });
+  assert.deepEqual(historyIds(app), [1, 2, 3]);
+  assert.equal(scroll.scrollTop, scroll.scrollHeight);
+  scroll.scrollTop = 12;
+  app.emit("history-updated", { entry: historyEntry(4) });
+  assert.deepEqual(historyIds(app), [1, 2, 3, 4]);
+  assert.equal(scroll.scrollTop, 12);
+});
+
+test("saving history can fail without discarding the successful translation", async () => {
+  const app = await createApp();
+  app.element("#input").value = "hello";
+  const translating = app.translate();
+  app.emit("history-updated", { error: "disk full" });
+  app.requests[0].resolve("你好");
+  await translating;
+  assert.equal(app.element("#output").value, "你好");
+  assert.match(app.element("#status").textContent, /未能保存.*disk full/);
+  app.emit("history-updated", { entry: historyEntry(2) });
+  assert.equal(app.element("#status").textContent, "");
+});
+
+test("a newer successful save cannot be replaced by an older history page warning", async () => {
+  const pending = deferred();
+  const app = await createApp({}, { invoke: { load_history: () => pending.promise } });
+  app.emit("history-updated", { error: "old failure" });
+  const loading = app.element("#open-history").dispatch("click");
+  app.emit("history-updated", { entry: historyEntry(1) });
+  pending.resolve({ entries: [], has_more: false, save_error: "old failure" });
+  await loading;
+  assert.equal(app.element("#history-notice").classList.contains("hidden"), true);
+  assert.deepEqual(historyIds(app), [1]);
+});
+
+test("history text is rendered literally, including markup, line breaks, and right-to-left text", async () => {
+  const entry = { ...historyEntry(1, "<img src=x onerror=alert(1)>\nالعربية"), lang_a: "Arabic" };
+  const app = await createApp({}, { invoke: {
+    load_history: async () => ({ entries: [entry], has_more: false }),
+  } });
+  await app.element("#open-history").dispatch("click");
+  const item = app.element("#history-list").children[0];
+  const source = item.children[1].children[0];
+  assert.equal(source.textContent, entry.source_text);
+  assert.equal(source.dir, "auto");
+  assert.equal(source.lang, "ar");
+  assert.equal(source.children.length, 0);
+});
+
 test("an unchanged request updates the result and unlocks translation", async () => {
   const app = await createApp();
   app.element("#input").value = "hello";
@@ -188,6 +366,170 @@ test("changing the UI language updates an in-flight hint and restores the shortc
   app.requests[0].resolve("你好");
   await pending;
   assert.equal(app.element("#translate-hint").textContent, "⌘ + ↵");
+});
+
+test("paste appends exact clipboard text instead of replacing the input selection", async () => {
+  const app = await createApp({}, { invoke: {
+    "plugin:clipboard-manager|read_text": async () => "\nworld",
+  } });
+  app.element("#input").value = "hello";
+  app.element("#input").setSelectionRange(1, 4);
+  app.element("#output").value = "keep result";
+  await app.element("#paste-input").dispatch("click");
+  assert.equal(app.element("#input").value, "hello\nworld");
+  assert.equal(app.element("#input").selectionStart, 11);
+  assert.equal(app.element("#input").selectionEnd, 11);
+  assert.equal(app.element("#output").value, "keep result");
+  assert.equal(app.element("#paste-input").disabled, false);
+});
+
+for (const content of [null, "", { format: "image" }]) {
+  test(`paste silently ignores a non-text or empty clipboard: ${JSON.stringify(content)}`, async () => {
+    const app = await createApp({}, { invoke: {
+      "plugin:clipboard-manager|read_text": async () => content,
+    } });
+    app.element("#input").value = "keep input";
+    app.element("#output").value = "keep result";
+    await app.element("#paste-input").dispatch("click");
+    assert.equal(app.element("#input").value, "keep input");
+    assert.equal(app.element("#output").value, "keep result");
+    assert.equal(app.element("#status").textContent, "");
+    assert.equal(app.element("#paste-input").disabled, false);
+    assert.notEqual(app.element("#input").focused, true);
+  });
+}
+
+test("the native non-text clipboard error is ignored without hiding other errors", async () => {
+  const app = await createApp({ load_error: "keep configuration warning" }, { invoke: {
+    "plugin:clipboard-manager|read_text": async () => {
+      throw "The clipboard contents were not available in the requested format or the clipboard is empty.";
+    },
+  } });
+  app.element("#input").value = "keep input";
+  await app.element("#paste-input").dispatch("click");
+  assert.equal(app.element("#input").value, "keep input");
+  assert.equal(app.element("#status").textContent, "keep configuration warning");
+  assert.equal(app.element("#paste-input").disabled, false);
+});
+
+test("clearing input cancels a pending paste and duplicate paste clicks are ignored", async () => {
+  const gate = deferred();
+  const app = await createApp({}, { invoke: {
+    "plugin:clipboard-manager|read_text": () => gate.promise,
+  } });
+  app.element("#input").value = "old input";
+  const pending = app.element("#paste-input").dispatch("click");
+  assert.equal(app.element("#paste-input").disabled, true);
+  await app.element("#paste-input").dispatch("click");
+  app.element("#clear-input").dispatch("click");
+  gate.resolve("clipboard text");
+  await pending;
+  assert.equal(app.element("#input").value, "");
+  assert.equal(app.commands.filter(({ command }) => command === "plugin:clipboard-manager|read_text").length, 1);
+  assert.equal(app.element("#paste-input").disabled, false);
+});
+
+test("each clear action empties only its own pane and empty actions are disabled", async () => {
+  const app = await createApp();
+  for (const id of ["#clear-input", "#copy-output", "#clear-output"]) assert.equal(app.element(id).disabled, true);
+  app.element("#input").value = "input";
+  app.element("#output").value = "result";
+  app.element("#input").dispatch("input");
+  assert.equal(app.element("#clear-input").disabled, false);
+  assert.equal(app.element("#copy-output").disabled, false);
+  app.element("#clear-input").dispatch("click");
+  assert.equal(app.element("#input").value, "");
+  assert.equal(app.element("#output").value, "result");
+  app.element("#input").value = "keep this";
+  app.element("#clear-output").dispatch("click");
+  assert.equal(app.element("#input").value, "keep this");
+  assert.equal(app.element("#output").value, "");
+  assert.equal(app.element("#copy-output").disabled, true);
+  assert.equal(app.element("#clear-output").disabled, true);
+});
+
+test("copy writes the whole result and its success feedback follows the UI locale", async () => {
+  const app = await createApp();
+  app.element("#output").value = "  结果\n";
+  await app.element("#copy-output").dispatch("click");
+  const copied = app.commands.find(({ command }) => command === "plugin:clipboard-manager|write_text");
+  assert.equal(copied.args.text, "  结果\n");
+  assert.equal(app.element("#copy-output").classList.contains("copied"), true);
+  assert.equal(app.element("#copy-output").getAttribute("aria-label"), "已复制");
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.equal(app.element("#copy-output").title, "Copied");
+  app.runTimer([...app.timers.keys()][0]);
+  assert.equal(app.element("#copy-output").classList.contains("copied"), false);
+  assert.equal(app.element("#copy-output").title, "Copy result");
+  assert.equal(app.element("#status").textContent, "");
+});
+
+test("a copy finishing after the result was cleared cannot restore success feedback", async () => {
+  const gate = deferred();
+  const app = await createApp({}, { invoke: {
+    "plugin:clipboard-manager|write_text": () => gate.promise,
+  } });
+  app.element("#output").value = "old result";
+  const pending = app.element("#copy-output").dispatch("click");
+  app.element("#clear-output").dispatch("click");
+  gate.resolve();
+  await pending;
+  assert.equal(app.element("#output").value, "");
+  assert.equal(app.element("#copy-output").classList.contains("copied"), false);
+  assert.equal(app.element("#copy-output").disabled, true);
+});
+
+test("clipboard errors preserve the text and unlock the action buttons", async () => {
+  let unavailable = true;
+  const app = await createApp({}, { invoke: {
+    "plugin:clipboard-manager|read_text": async () => { throw new Error("unavailable"); },
+    "plugin:clipboard-manager|write_text": async () => {
+      if (unavailable) throw new Error("unavailable");
+    },
+  } });
+  app.element("#input").value = "input";
+  app.element("#output").value = "result";
+  await app.element("#paste-input").dispatch("click");
+  assert.match(app.element("#status").textContent, /无法读取剪贴板/);
+  await app.element("#copy-output").dispatch("click");
+  assert.match(app.element("#status").textContent, /复制失败/);
+  assert.equal(app.element("#input").value, "input");
+  assert.equal(app.element("#output").value, "result");
+  assert.equal(app.element("#paste-input").disabled, false);
+  assert.equal(app.element("#copy-output").disabled, false);
+  unavailable = false;
+  await app.element("#copy-output").dispatch("click");
+  assert.equal(app.element("#status").textContent, "");
+  assert.equal(app.element("#copy-output").classList.contains("copied"), true);
+});
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`clearing the result discards a pending translation's ${outcome}`, async () => {
+    const app = await createApp();
+    app.element("#input").value = "hello";
+    app.element("#output").value = "old result";
+    const pending = app.translate();
+    app.element("#clear-output").dispatch("click");
+    app.requests[0][outcome]("late result");
+    await pending;
+    assert.equal(app.element("#input").value, "hello");
+    assert.equal(app.element("#output").value, "");
+    assert.equal(app.element("#status").textContent, "");
+    assert.equal(app.element("#copy-output").disabled, true);
+  });
+}
+
+test("clearing and retyping the same input still invalidates the older translation", async () => {
+  const app = await createApp();
+  app.element("#input").value = "hello";
+  app.element("#output").value = "keep result";
+  const pending = app.translate();
+  app.element("#clear-input").dispatch("click");
+  app.element("#input").value = "hello";
+  app.requests[0].resolve("late result");
+  await pending;
+  assert.equal(app.element("#output").value, "keep result");
 });
 
 test("only one language list opens and outside clicks dismiss it without changing the selection", async () => {

@@ -6,6 +6,9 @@ use std::{
     time::Duration,
 };
 
+mod history;
+use history::{HistoryPage, HistoryStore};
+
 #[cfg(target_os = "macos")]
 use std::{
     cell::{Cell, RefCell},
@@ -506,6 +509,14 @@ fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn load_history(app: tauri::AppHandle, before: Option<u64>) -> Result<HistoryPage, String> {
+    app.state::<Mutex<HistoryStore>>()
+        .lock()
+        .map_err(|_| "历史记录状态不可用".to_string())?
+        .page(before)
+}
+
+#[tauri::command]
 async fn translate(
     app: tauri::AppHandle,
     text: String,
@@ -552,7 +563,19 @@ async fn translate(
 
     let value: serde_json::Value =
         serde_json::from_str(&response_text).map_err(|e| format!("解析响应失败：{e}"))?;
-    extract_translation(&value)
+    let translation = extract_translation(&value)?;
+    let saved = app
+        .state::<Mutex<HistoryStore>>()
+        .lock()
+        .map_err(|_| "历史记录状态不可用".to_string())
+        .and_then(|mut history| history.append(text, translation.clone(), lang_a, lang_b));
+    // A history write failure must never discard a successful translation.
+    let payload = match saved {
+        Ok(entry) => serde_json::json!({ "entry": entry }),
+        Err(error) => serde_json::json!({ "error": error }),
+    };
+    let _ = app.emit("history-updated", payload);
+    Ok(translation)
 }
 
 fn translation_request_body(
@@ -1045,11 +1068,13 @@ pub fn run() {
         builder = builder.plugin(tauri_nspanel::init());
     }
     builder
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
             save_ui_lang,
             save_languages,
+            load_history,
             translate,
             frontend_ready,
             request_hide,
@@ -1059,6 +1084,12 @@ pub fn run() {
             let config = ConfigState::new(read_config(app.handle()));
             let initial_config = config.current.clone();
             app.manage(AppState::new(config));
+            app.manage(Mutex::new(HistoryStore::new(
+                app.path()
+                    .app_data_dir()
+                    .map(|dir| dir.join("history.json"))
+                    .map_err(|error| format!("无法定位历史记录目录：{error}")),
+            )));
             #[cfg(target_os = "macos")]
             {
                 // Prohibited (not Accessory): the app must never activate. The

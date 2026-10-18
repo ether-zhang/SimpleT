@@ -2,6 +2,8 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const isMac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
 const translateShortcut = isMac ? "⌘ + ↵" : "Ctrl + ↵";
+// The clipboard plugin serializes arboard's non-text/empty result as this string.
+const NON_TEXT_CLIPBOARD = "The clipboard contents were not available in the requested format or the clipboard is empty.";
 
 // value 写入 system prompt（模型理解的英文名）；code 为 BCP-47，用于本地化显示名
 const LANGUAGES = [
@@ -24,8 +26,23 @@ const LANGUAGES = [
 const I18N = {
   zh: {
     _name: "中文",
+    history: "历史记录",
+    historyHint: "向上查看更早记录",
+    historyEmpty: "还没有历史记录，完成翻译后会自动保存在这里",
+    historyLoading: "加载中…",
+    historyMore: "加载更早记录",
+    historyLoadError: "历史记录加载失败",
+    historySaveError: "本次翻译未能保存到历史记录",
+    retry: "重试",
     sourceLanguage: "源语言",
     targetLanguage: "目标语言",
+    pasteInput: "追加粘贴",
+    clearInput: "清除输入",
+    copyOutput: "复制结果",
+    clearOutput: "清除结果",
+    copied: "已复制",
+    pasteError: "无法读取剪贴板",
+    copyError: "复制失败",
     swapTitle: "交换语言",
     inputPh: "输入要翻译的内容…",
     outputPh: "翻译结果",
@@ -46,8 +63,23 @@ const I18N = {
   },
   en: {
     _name: "English",
+    history: "History",
+    historyHint: "Scroll up for older translations",
+    historyEmpty: "Completed translations will appear here",
+    historyLoading: "Loading…",
+    historyMore: "Load older translations",
+    historyLoadError: "Unable to load history",
+    historySaveError: "This translation could not be saved to history",
+    retry: "Retry",
     sourceLanguage: "Source language",
     targetLanguage: "Target language",
+    pasteInput: "Paste at end",
+    clearInput: "Clear input",
+    copyOutput: "Copy result",
+    clearOutput: "Clear result",
+    copied: "Copied",
+    pasteError: "Unable to read clipboard",
+    copyError: "Copy failed",
     swapTitle: "Swap languages",
     inputPh: "Enter text to translate…",
     outputPh: "Translation",
@@ -68,8 +100,23 @@ const I18N = {
   },
   ja: {
     _name: "日本語",
+    history: "履歴",
+    historyHint: "上にスクロールして過去の翻訳を表示",
+    historyEmpty: "翻訳が完了すると、ここに保存されます",
+    historyLoading: "読み込み中…",
+    historyMore: "過去の翻訳を読み込む",
+    historyLoadError: "履歴を読み込めません",
+    historySaveError: "今回の翻訳を履歴に保存できませんでした",
+    retry: "再試行",
     sourceLanguage: "翻訳元の言語",
     targetLanguage: "翻訳先の言語",
+    pasteInput: "末尾に貼り付け",
+    clearInput: "入力を消去",
+    copyOutput: "結果をコピー",
+    clearOutput: "結果を消去",
+    copied: "コピーしました",
+    pasteError: "クリップボードを読み取れません",
+    copyError: "コピーに失敗しました",
     swapTitle: "言語を入れ替え",
     inputPh: "翻訳する内容を入力…",
     outputPh: "翻訳結果",
@@ -90,8 +137,23 @@ const I18N = {
   },
   ko: {
     _name: "한국어",
+    history: "기록",
+    historyHint: "위로 스크롤하여 이전 번역 보기",
+    historyEmpty: "완료된 번역이 여기에 저장됩니다",
+    historyLoading: "불러오는 중…",
+    historyMore: "이전 번역 불러오기",
+    historyLoadError: "기록을 불러올 수 없습니다",
+    historySaveError: "이번 번역을 기록에 저장하지 못했습니다",
+    retry: "다시 시도",
     sourceLanguage: "원본 언어",
     targetLanguage: "대상 언어",
+    pasteInput: "끝에 붙여넣기",
+    clearInput: "입력 지우기",
+    copyOutput: "결과 복사",
+    clearOutput: "결과 지우기",
+    copied: "복사됨",
+    pasteError: "클립보드를 읽을 수 없습니다",
+    copyError: "복사 실패",
     swapTitle: "언어 교환",
     inputPh: "번역할 내용을 입력…",
     outputPh: "번역 결과",
@@ -112,8 +174,23 @@ const I18N = {
   },
   fr: {
     _name: "Français",
+    history: "Historique",
+    historyHint: "Défiler vers le haut pour les anciennes traductions",
+    historyEmpty: "Les traductions terminées apparaîtront ici",
+    historyLoading: "Chargement…",
+    historyMore: "Charger les traductions précédentes",
+    historyLoadError: "Impossible de charger l’historique",
+    historySaveError: "Cette traduction n’a pas pu être enregistrée",
+    retry: "Réessayer",
     sourceLanguage: "Langue source",
     targetLanguage: "Langue cible",
+    pasteInput: "Coller à la fin",
+    clearInput: "Effacer la saisie",
+    copyOutput: "Copier le résultat",
+    clearOutput: "Effacer le résultat",
+    copied: "Copié",
+    pasteError: "Lecture du presse-papiers impossible",
+    copyError: "Échec de la copie",
     swapTitle: "Inverser les langues",
     inputPh: "Saisir le texte à traduire…",
     outputPh: "Traduction",
@@ -134,8 +211,23 @@ const I18N = {
   },
   de: {
     _name: "Deutsch",
+    history: "Verlauf",
+    historyHint: "Für ältere Übersetzungen nach oben scrollen",
+    historyEmpty: "Abgeschlossene Übersetzungen erscheinen hier",
+    historyLoading: "Wird geladen…",
+    historyMore: "Ältere Übersetzungen laden",
+    historyLoadError: "Verlauf kann nicht geladen werden",
+    historySaveError: "Diese Übersetzung konnte nicht gespeichert werden",
+    retry: "Erneut versuchen",
     sourceLanguage: "Ausgangssprache",
     targetLanguage: "Zielsprache",
+    pasteInput: "Am Ende einfügen",
+    clearInput: "Eingabe leeren",
+    copyOutput: "Ergebnis kopieren",
+    clearOutput: "Ergebnis leeren",
+    copied: "Kopiert",
+    pasteError: "Zwischenablage kann nicht gelesen werden",
+    copyError: "Kopieren fehlgeschlagen",
     swapTitle: "Sprachen tauschen",
     inputPh: "Zu übersetzenden Text eingeben…",
     outputPh: "Übersetzung",
@@ -156,8 +248,23 @@ const I18N = {
   },
   es: {
     _name: "Español",
+    history: "Historial",
+    historyHint: "Desplázate hacia arriba para ver traducciones anteriores",
+    historyEmpty: "Las traducciones completadas aparecerán aquí",
+    historyLoading: "Cargando…",
+    historyMore: "Cargar traducciones anteriores",
+    historyLoadError: "No se pudo cargar el historial",
+    historySaveError: "No se pudo guardar esta traducción en el historial",
+    retry: "Reintentar",
     sourceLanguage: "Idioma de origen",
     targetLanguage: "Idioma de destino",
+    pasteInput: "Pegar al final",
+    clearInput: "Borrar entrada",
+    copyOutput: "Copiar resultado",
+    clearOutput: "Borrar resultado",
+    copied: "Copiado",
+    pasteError: "No se puede leer el portapapeles",
+    copyError: "Error al copiar",
     swapTitle: "Intercambiar idiomas",
     inputPh: "Escribe el texto a traducir…",
     outputPh: "Traducción",
@@ -178,8 +285,23 @@ const I18N = {
   },
   ru: {
     _name: "Русский",
+    history: "История",
+    historyHint: "Прокрутите вверх для просмотра старых переводов",
+    historyEmpty: "Завершённые переводы появятся здесь",
+    historyLoading: "Загрузка…",
+    historyMore: "Загрузить старые переводы",
+    historyLoadError: "Не удалось загрузить историю",
+    historySaveError: "Не удалось сохранить этот перевод в истории",
+    retry: "Повторить",
     sourceLanguage: "Исходный язык",
     targetLanguage: "Язык перевода",
+    pasteInput: "Вставить в конец",
+    clearInput: "Очистить ввод",
+    copyOutput: "Копировать результат",
+    clearOutput: "Очистить результат",
+    copied: "Скопировано",
+    pasteError: "Не удалось прочитать буфер обмена",
+    copyError: "Не удалось скопировать",
     swapTitle: "Поменять языки",
     inputPh: "Введите текст для перевода…",
     outputPh: "Перевод",
@@ -223,6 +345,7 @@ function applyLocale(lang) {
   els.output.placeholder = t("outputPh");
   els.translateLabel.textContent = t("translate");
   updateTranslateHint();
+  updateQuickActions();
   els.openSettings.textContent = t("settings");
   els.closeFlyout.title = t("closeTitle");
   els.closeFlyout.setAttribute("aria-label", t("closeTitle"));
@@ -234,6 +357,16 @@ function applyLocale(lang) {
   els.lblUiLang.textContent = t("uiLangLabel");
   els.cfgSave.textContent = t("save");
   els.cfgBack.textContent = t("back");
+  els.openHistory.title = t("history");
+  els.openHistory.setAttribute("aria-label", t("history"));
+  els.historyTitle.textContent = t("history");
+  els.historyHint.textContent = t("historyHint");
+  els.historyBack.title = t("back");
+  els.historyBack.setAttribute("aria-label", t("back"));
+  els.historyScroll.setAttribute("aria-label", t("history"));
+  els.historyRetry.textContent = t("retry");
+  renderHistoryEntries();
+  updateHistoryState();
   // A(B) 中的 A 随界面语言变化，重建两个语种列表并保留已选值。
   closeLanguagePicker();
   languagePickers.forEach(renderLanguagePicker);
@@ -422,6 +555,246 @@ let apiKeyRevision = 0;
 let configSaveInFlight = false;
 let configWriteQueue = Promise.resolve();
 let configStatusTimer = null;
+let pasteInFlight = false;
+let copyInFlight = false;
+let inputClearVersion = 0;
+let resultRevision = 0;
+let copied = false;
+let copyFeedbackTimer = null;
+let clipboardStatus = "";
+let historyEntries = [];
+let historyPendingEntries = [];
+let historyHasMore = false;
+let historyLoaded = false;
+let historyLoading = false;
+let historyLoadError = "";
+let historySaveError = "";
+let historyRequestVersion = 0;
+let historyUpdateVersion = 0;
+
+function historyWarning() {
+  return historySaveError ? `${t("historySaveError")}: ${historySaveError}` : "";
+}
+
+function updateHistoryState() {
+  els.historyScroll.setAttribute("aria-busy", String(historyLoading));
+  els.historyMore.classList.toggle("hidden", !historyHasMore);
+  els.historyMore.disabled = historyLoading;
+  els.historyMore.textContent = t(historyLoading ? "historyLoading" : "historyMore");
+  els.historyEmpty.classList.toggle("hidden", historyEntries.length > 0 || Boolean(historyLoadError));
+  els.historyEmpty.textContent = t(historyLoading ? "historyLoading" : "historyEmpty");
+  const message = historyLoadError ? `${t("historyLoadError")}: ${historyLoadError}` : historyWarning();
+  els.historyStatus.textContent = message;
+  els.historyNotice.classList.toggle("hidden", !message);
+  els.historyRetry.classList.toggle("hidden", !historyLoadError);
+  els.historyRetry.disabled = historyLoading;
+}
+
+function historyLanguage(value) {
+  const language = LANGUAGES.find((lang) => lang.value === value);
+  return language ? displayName(currentLang, language.code) : value;
+}
+
+function renderHistoryEntries() {
+  const formatter = new Intl.DateTimeFormat(currentLang, {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+  els.historyList.replaceChildren(...historyEntries.map((entry) => {
+    const item = document.createElement("article");
+    item.className = "history-entry";
+    item.setAttribute("role", "listitem");
+    item.setAttribute("data-history-id", String(entry.id));
+    const meta = document.createElement("div");
+    meta.className = "history-meta";
+    const languages = document.createElement("span");
+    languages.textContent = `${historyLanguage(entry.lang_a)} → ${historyLanguage(entry.lang_b)}`;
+    const time = document.createElement("time");
+    const date = new Date(entry.created_at);
+    time.dateTime = date.toISOString();
+    time.textContent = formatter.format(date);
+    meta.appendChild(languages);
+    meta.appendChild(time);
+    const texts = document.createElement("div");
+    texts.className = "history-texts";
+    for (const [text, language] of [[entry.source_text, entry.lang_a], [entry.translation, entry.lang_b]]) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = text;
+      paragraph.dir = "auto";
+      paragraph.lang = LANGUAGES.find((lang) => lang.value === language)?.code || "";
+      texts.appendChild(paragraph);
+    }
+    item.appendChild(meta);
+    item.appendChild(texts);
+    return item;
+  }));
+}
+
+function mergeHistory(...groups) {
+  return [...new Map(groups.flat().map((entry) => [entry.id, entry])).values()]
+    .sort((a, b) => a.id - b.id);
+}
+
+function historyAtBottom() {
+  return els.historyScroll.scrollHeight - els.historyScroll.clientHeight - els.historyScroll.scrollTop < 40;
+}
+
+async function loadHistory(reset = false) {
+  if (historyLoading && !reset) return;
+  if (!reset && !historyHasMore) return;
+  const version = ++historyRequestVersion;
+  if (reset) {
+    historyEntries = [];
+    historyPendingEntries = [];
+    historyHasMore = false;
+    historyLoaded = false;
+    renderHistoryEntries();
+  }
+  historyLoading = true;
+  historyLoadError = "";
+  const updateVersion = historyUpdateVersion;
+  updateHistoryState();
+  try {
+    const page = await invoke("load_history", { before: reset ? null : historyEntries[0]?.id });
+    if (version !== historyRequestVersion || currentPage !== "history") return;
+    const previousHeight = els.historyScroll.scrollHeight;
+    const previousTop = els.historyScroll.scrollTop;
+    historyEntries = mergeHistory(historyEntries, page.entries, historyPendingEntries);
+    historyPendingEntries = [];
+    historyHasMore = page.has_more;
+    if (updateVersion === historyUpdateVersion) historySaveError = page.save_error || "";
+    historyLoaded = true;
+    renderHistoryEntries();
+    historyLoading = false;
+    updateHistoryState();
+    // Prepending older entries must keep the text being read in the same place.
+    els.historyScroll.scrollTop = reset ? els.historyScroll.scrollHeight
+      : previousTop + els.historyScroll.scrollHeight - previousHeight;
+  } catch (error) {
+    if (version === historyRequestVersion) historyLoadError = String(error);
+  } finally {
+    if (version === historyRequestVersion) {
+      historyLoading = false;
+      updateHistoryState();
+    }
+  }
+}
+
+function onHistoryUpdated({ entry, error }) {
+  historyUpdateVersion++;
+  const previousWarning = historyWarning();
+  historySaveError = error || "";
+  if (currentPage === "translate" && (historySaveError || els.status.textContent === previousWarning)) {
+    els.status.textContent = historyWarning();
+  }
+  if (entry && currentPage === "history") {
+    if (!historyLoaded) historyPendingEntries.push(entry);
+    else {
+      const atBottom = historyAtBottom();
+      historyEntries = mergeHistory(historyEntries, [entry]);
+      renderHistoryEntries();
+      updateHistoryState();
+      if (atBottom) els.historyScroll.scrollTop = els.historyScroll.scrollHeight;
+    }
+  }
+  updateHistoryState();
+}
+
+function clearClipboardStatus() {
+  if (clipboardStatus && els.status.textContent === clipboardStatus) els.status.textContent = "";
+  clipboardStatus = "";
+}
+
+function showClipboardError(key, error) {
+  clipboardStatus = `${t(key)}: ${error}`;
+  els.status.textContent = clipboardStatus;
+}
+
+function updateQuickActions() {
+  els.pasteInput.disabled = pasteInFlight;
+  els.clearInput.disabled = !els.input.value;
+  els.copyOutput.disabled = !els.output.value || copyInFlight;
+  els.clearOutput.disabled = !els.output.value;
+  for (const [button, label] of [
+    [els.pasteInput, "pasteInput"], [els.clearInput, "clearInput"],
+    [els.copyOutput, copied ? "copied" : "copyOutput"], [els.clearOutput, "clearOutput"],
+  ]) {
+    button.title = t(label);
+    button.setAttribute("aria-label", t(label));
+  }
+}
+
+function resetCopyFeedback() {
+  clearTimeout(copyFeedbackTimer);
+  copyFeedbackTimer = null;
+  copied = false;
+  els.copyOutput.classList.remove("copied");
+}
+
+async function pasteInput() {
+  if (pasteInFlight) return;
+  clearClipboardStatus();
+  const version = inputClearVersion;
+  pasteInFlight = true;
+  updateQuickActions();
+  try {
+    const text = await invoke("plugin:clipboard-manager|read_text");
+    if (version !== inputClearVersion || typeof text !== "string" || !text) return;
+    els.input.value += text;
+    els.input.setSelectionRange(els.input.value.length, els.input.value.length);
+    els.input.scrollTop = els.input.scrollHeight;
+    if (currentPage === "translate" && !closeRequested) els.input.focus();
+  } catch (error) {
+    const message = error?.message ?? String(error);
+    if (version === inputClearVersion && message !== NON_TEXT_CLIPBOARD) showClipboardError("pasteError", error);
+  } finally {
+    pasteInFlight = false;
+    updateQuickActions();
+  }
+}
+
+async function copyOutput() {
+  const text = els.output.value;
+  if (!text || copyInFlight) return;
+  clearClipboardStatus();
+  const revision = resultRevision;
+  resetCopyFeedback();
+  copyInFlight = true;
+  updateQuickActions();
+  try {
+    await invoke("plugin:clipboard-manager|write_text", { text });
+    if (revision !== resultRevision || els.output.value !== text) return;
+    resetCopyFeedback();
+    copied = true;
+    els.copyOutput.classList.add("copied");
+    copyFeedbackTimer = setTimeout(() => {
+      resetCopyFeedback();
+      updateQuickActions();
+    }, 1500);
+  } catch (error) {
+    if (revision === resultRevision && els.output.value === text) {
+      showClipboardError("copyError", error);
+    }
+  } finally {
+    copyInFlight = false;
+    updateQuickActions();
+  }
+}
+
+function clearInput() {
+  inputClearVersion++;
+  resultRevision++;
+  els.input.value = "";
+  els.input.focus();
+  updateQuickActions();
+}
+
+function clearOutput() {
+  resultRevision++;
+  els.output.value = "";
+  resetCopyFeedback();
+  els.output.focus();
+  updateQuickActions();
+}
 
 function updateApiKeyUI() {
   els.cfgKey.placeholder = !apiKeyChanged && apiKeyConfigured ? "••••••••" : "sk-…";
@@ -520,16 +893,22 @@ function slideOutThenHide(generation) {
 
 function showPage(page) {
   closeLanguagePicker();
-  const isSettings = page === "settings";
-  currentPage = isSettings ? "settings" : "translate";
-  els.pageTranslate.classList.toggle("hidden", isSettings);
-  els.pageSettings.classList.toggle("hidden", !isSettings);
+  currentPage = ["settings", "history"].includes(page) ? page : "translate";
+  els.pageTranslate.classList.toggle("hidden", currentPage !== "translate");
+  els.pageSettings.classList.toggle("hidden", currentPage !== "settings");
+  els.pageHistory.classList.toggle("hidden", currentPage !== "history");
+  // Invalidate an older history request when leaving or reopening the page.
+  historyRequestVersion++;
+  historyLoading = false;
   // 显示后立刻聚焦输入框，让中文输入法候选框贴着光标出现（修复其跑到左上角的问题）
   cancelPageFocus();
   focusFrame = requestAnimationFrame(() => {
     focusFrame = null;
-    (isSettings ? els.cfgUrl : els.input).focus();
+    const target = currentPage === "settings" ? els.cfgUrl
+      : currentPage === "history" ? els.historyScroll : els.input;
+    target.focus({ preventScroll: true });
   });
+  if (currentPage === "history") return loadHistory(true);
 }
 
 async function doTranslate() {
@@ -537,12 +916,15 @@ async function doTranslate() {
   const text = els.input.value;
   if (!text.trim()) {
     els.output.value = "";
+    resetCopyFeedback();
+    updateQuickActions();
     return;
   }
   const langA = els.langA.value;
   const langB = els.langB.value;
+  const revision = resultRevision;
   const isCurrentInput = () =>
-    els.input.value === text && els.langA.value === langA && els.langB.value === langB;
+    resultRevision === revision && els.input.value === text && els.langA.value === langA && els.langB.value === langB;
   translationInFlight = true;
   els.status.textContent = "";
   els.translateBtn.disabled = true;
@@ -555,15 +937,18 @@ async function doTranslate() {
     });
     if (!isCurrentInput()) return;
     els.output.value = result;
-    els.status.textContent = "";
+    resetCopyFeedback();
+    els.status.textContent = historyWarning();
   } catch (e) {
     if (!isCurrentInput()) return;
     els.output.value = "";
+    resetCopyFeedback();
     els.status.textContent = String(e);
   } finally {
     translationInFlight = false;
     els.translateBtn.disabled = false;
     updateTranslateHint();
+    updateQuickActions();
   }
 }
 
@@ -650,11 +1035,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     closeFlyout: document.querySelector("#close-flyout"),
     pageTranslate: document.querySelector("#page-translate"),
     pageSettings: document.querySelector("#page-settings"),
+    pageHistory: document.querySelector("#page-history"),
+    openHistory: document.querySelector("#open-history"),
+    historyBack: document.querySelector("#history-back"),
+    historyTitle: document.querySelector("#history-title"),
+    historyHint: document.querySelector("#history-hint"),
+    historyScroll: document.querySelector("#history-scroll"),
+    historyList: document.querySelector("#history-list"),
+    historyEmpty: document.querySelector("#history-empty"),
+    historyNotice: document.querySelector("#history-notice"),
+    historyStatus: document.querySelector("#history-status"),
+    historyRetry: document.querySelector("#history-retry"),
+    historyMore: document.querySelector("#history-more"),
     langA: document.querySelector("#lang-a"),
     langB: document.querySelector("#lang-b"),
     swap: document.querySelector("#swap"),
     input: document.querySelector("#input"),
     output: document.querySelector("#output"),
+    pasteInput: document.querySelector("#paste-input"),
+    clearInput: document.querySelector("#clear-input"),
+    copyOutput: document.querySelector("#copy-output"),
+    clearOutput: document.querySelector("#clear-output"),
     translateBtn: document.querySelector("#translate-btn"),
     translateLabel: document.querySelector("#translate-label"),
     translateHint: document.querySelector("#translate-hint"),
@@ -697,9 +1098,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       slideIn(origin || "bottom");
     }),
     listen("flyout-hide", (e) => slideOutThenHide(e.payload?.generation)),
+    listen("history-updated", (e) => onHistoryUpdated(e.payload)),
   ]);
 
   els.translateBtn.addEventListener("click", doTranslate);
+  els.pasteInput.addEventListener("click", pasteInput);
+  els.clearInput.addEventListener("click", clearInput);
+  els.copyOutput.addEventListener("click", copyOutput);
+  els.clearOutput.addEventListener("click", clearOutput);
+  els.input.addEventListener("input", updateQuickActions);
   els.closeFlyout.addEventListener("click", requestClose);
   els.cfgKey.addEventListener("input", () => {
     apiKeyChanged = true;
@@ -731,10 +1138,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     const t = els.input.value;
     els.input.value = els.output.value;
     els.output.value = t;
+    resetCopyFeedback();
+    updateQuickActions();
     await persistLangs();
   });
 
   els.openSettings.addEventListener("click", () => showPage("settings"));
+  els.openHistory.addEventListener("click", () => showPage("history"));
+  els.historyBack.addEventListener("click", () => showPage("translate"));
+  els.historyMore.addEventListener("click", () => loadHistory());
+  els.historyRetry.addEventListener("click", () => loadHistory(!historyLoaded));
+  els.historyScroll.addEventListener("scroll", () => {
+    if (currentPage === "history" && els.historyScroll.scrollTop < 48 && historyHasMore) loadHistory();
+  });
   els.cfgSave.addEventListener("click", saveConfig);
   els.cfgBack.addEventListener("click", () => showPage("translate"));
 
