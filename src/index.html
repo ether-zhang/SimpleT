@@ -68,9 +68,9 @@
 
     <!-- 历史页：旧记录在上，新记录在下，打开时定位到底端。 -->
     <section id="page-history" class="page hidden" aria-labelledby="history-title">
-      <header class="history-header">
-        <button id="history-back" class="icon-button" type="button" title="返回翻译" aria-label="返回翻译">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+      <header class="page-header">
+        <button id="history-back" class="icon-button page-back" type="button" title="返回翻译" aria-label="返回翻译">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
         </button>
         <h2 id="history-title">历史记录</h2>
         <span id="history-hint" class="history-hint">向上查看更早记录</span>
@@ -87,8 +87,13 @@
     </section>
 
     <!-- 设置页 -->
-    <section id="page-settings" class="page hidden">
-      <h2 id="settings-title">设置</h2>
+    <section id="page-settings" class="page hidden" aria-labelledby="settings-title">
+      <header class="page-header">
+        <button id="cfg-back" class="icon-button page-back" type="button" title="返回翻译" aria-label="返回翻译">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+        </button>
+        <h2 id="settings-title">设置</h2>
+      </header>
       <label>
         <span id="lbl-url">模型 URL（OpenAI 格式，以 /v1 结尾）</span>
         <input id="cfg-url" type="text" placeholder="https://api.openai.com/v1" />
@@ -104,13 +109,17 @@
         <span id="lbl-model">模型名称</span>
         <input id="cfg-model" type="text" placeholder="gpt-5.5-mini" />
       </label>
-      <label>
+      <div class="settings-field">
         <span id="lbl-uilang">界面语言</span>
-        <select id="cfg-ui-lang"></select>
-      </label>
+        <div id="cfg-ui-lang-picker" class="language-picker menu-up">
+          <button id="cfg-ui-lang" class="lang-select" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cfg-ui-lang-menu" value="zh">
+            <span id="cfg-ui-lang-label" class="language-label"></span>
+          </button>
+          <div id="cfg-ui-lang-menu" class="language-menu" role="listbox" hidden></div>
+        </div>
+      </div>
       <div class="settings-actions">
         <button id="cfg-save" class="translate-btn">保存</button>
-        <button id="cfg-back" class="secondary">返回翻译</button>
       </div>
       <div id="cfg-status" class="status"></div>
     </section>

@@ -196,6 +196,10 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   font-size: 14px;
 }
+.language-picker.menu-up .language-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 .language-option {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
@@ -310,7 +314,7 @@ body {
   gap: 4px;
 }
 .middle .icon-button,
-.history-header .icon-button {
+.page-back {
   display: grid;
   place-items: center;
   width: 24px;
@@ -353,13 +357,25 @@ body {
 .icon-button.copied .copy-success {
   display: block;
 }
-.history-header .icon-button {
-  width: 28px;
-  height: 28px;
+.page-header .page-back {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-.history-header .icon-button svg {
-  width: 18px;
-  height: 18px;
+.page-header .page-back:hover {
+  background: var(--border);
+}
+.page-header .page-back:active {
+  background: rgba(128, 128, 128, 0.22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.page-back svg {
+  width: 16px;
+  height: 16px;
 }
 .middle #open-history {
   width: 100%;
@@ -422,19 +438,21 @@ body {
   display: none;
 }
 
-/* ---- 历史页 ---- */
-.history-header {
+/* ---- 二级页面标题栏 ---- */
+.page-header {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 36px;
   flex-shrink: 0;
 }
-.history-header h2 {
+.page-header h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
 }
+
+/* ---- 历史页 ---- */
 .history-hint {
   margin-left: auto;
   color: var(--muted);
@@ -543,22 +561,16 @@ body {
 #page-settings {
   gap: 12px;
 }
-#page-settings h2 {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  margin: 0;
-  font-size: 18px;
-}
-#page-settings label {
+#page-settings label,
+.settings-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
   color: var(--muted);
 }
-#page-settings input,
-#page-settings select {
+#page-settings input {
+  width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -566,6 +578,9 @@ body {
   color: var(--fg);
   font-size: 14px;
   outline: none;
+}
+#page-settings .lang-select {
+  padding: 9px 11px;
 }
 .key-row {
   display: flex;
@@ -575,8 +590,7 @@ body {
   flex: 1;
   min-width: 0;
 }
-#page-settings input:focus,
-#page-settings select:focus {
+#page-settings input:focus {
   border-color: var(--accent);
 }
 .settings-actions {

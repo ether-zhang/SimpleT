@@ -62,7 +62,7 @@ async function createApp(config = {}, options = {}) {
     return elements.get(selector);
   }
 
-  for (const id of ["lang-a", "lang-b"]) {
+  for (const id of ["lang-a", "lang-b", "cfg-ui-lang"]) {
     element(`#${id}-picker`).appendChild(element(`#${id}`));
     element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
     element(`#${id}`).appendChild(element(`#${id}-label`));
@@ -609,6 +609,65 @@ test("language labels and checkmarks follow swapping and UI locale changes", asy
   assert.equal(app.element("#lang-a-menu").children[0].getAttribute("aria-selected"), "true");
   assert.equal(app.element("#lang-b-menu").children[4].getAttribute("aria-selected"), "true");
   assert.match(app.element("#lang-a").getAttribute("aria-label"), /^Source language:/);
+});
+
+test("the settings language picker restores its native name and saves only the UI language", async () => {
+  const app = await createApp({ ui_lang: "ko" }, { initialPage: "settings" });
+  assert.equal(app.element("#cfg-ui-lang-label").textContent, "한국어");
+  app.element("#cfg-ui-lang").dispatch("click");
+  const menu = app.element("#cfg-ui-lang-menu");
+  assert.equal(menu.children.length, 8);
+  assert.equal(menu.children[3].getAttribute("aria-selected"), "true");
+  await menu.children[1].dispatch("click");
+  assert.equal(app.element("#cfg-ui-lang").value, "en");
+  assert.equal(app.element("#cfg-ui-lang-label").textContent, "English");
+  assert.equal(app.element("#settings-title").textContent, "Settings");
+  assert.equal(menu.hidden, true);
+  assert.equal(menu.children[1].getAttribute("aria-selected"), "true");
+  const saved = app.commands.find(({ command }) => command === "save_ui_lang");
+  assert.equal(saved.args.uiLang, "en");
+  assert.equal(app.commands.some(({ command }) => command === "save_languages"), false);
+  assert.equal(app.element("#lang-a").value, "English");
+  assert.equal(app.element("#lang-b").value, "Chinese");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.ui_lang, "en");
+});
+
+test("settings language keyboard navigation uses its own choices and Escape cancels without saving", async () => {
+  const app = await createApp({}, { initialPage: "settings" });
+  const trigger = app.element("#cfg-ui-lang");
+  trigger.dispatch("keydown", { key: "End" });
+  assert.match(trigger.getAttribute("aria-activedescendant"), /-ru$/);
+  app.keydown({ key: "Escape" });
+  assert.equal(app.element("#cfg-ui-lang-menu").hidden, true);
+  assert.equal(trigger.value, "zh");
+  assert.equal(app.commands.some(({ command }) => command === "save_ui_lang"), false);
+  assert.equal(app.commands.some(({ command }) => command === "request_hide"), false);
+  trigger.dispatch("keydown", { key: "End" });
+  await trigger.dispatch("keydown", { key: "Enter" });
+  assert.equal(trigger.value, "ru");
+  assert.equal(app.element("#cfg-ui-lang-label").textContent, "Русский");
+  assert.equal(app.commands.find(({ command }) => command === "save_ui_lang").args.uiLang, "ru");
+});
+
+test("settings language typeahead searches native names and page navigation dismisses its list", async () => {
+  const app = await createApp({}, { initialPage: "settings" });
+  const trigger = app.element("#cfg-ui-lang");
+  trigger.dispatch("keydown", { key: "d" });
+  trigger.dispatch("keydown", { key: "e" });
+  assert.match(trigger.getAttribute("aria-activedescendant"), /-de$/);
+  trigger.dispatch("keydown", { key: "Tab" });
+  assert.equal(trigger.value, "zh");
+  assert.equal(app.commands.some(({ command }) => command === "save_ui_lang"), false);
+  trigger.dispatch("click");
+  app.element("#cfg-back").dispatch("click");
+  assert.equal(app.element("#cfg-ui-lang-menu").hidden, true);
+  app.element("#lang-a").dispatch("click");
+  trigger.dispatch("click");
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  assert.equal(app.element("#cfg-ui-lang-menu").hidden, false);
+  app.documentEvent("pointerdown", { target: app.element("#cfg-model") });
+  assert.equal(app.element("#cfg-ui-lang-menu").hidden, true);
 });
 
 test("open language lists close when navigating to settings or hiding the flyout", async () => {

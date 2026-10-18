@@ -326,6 +326,7 @@ let currentLang = "zh";
 let els = {};
 let languagePickers = [];
 let openLanguagePicker = null;
+const UI_LANGUAGES = Object.entries(I18N).map(([code, dict]) => ({ value: code, code, label: dict._name }));
 
 function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
@@ -356,13 +357,14 @@ function applyLocale(lang) {
   els.lblModel.textContent = t("modelLabel");
   els.lblUiLang.textContent = t("uiLangLabel");
   els.cfgSave.textContent = t("save");
-  els.cfgBack.textContent = t("back");
+  for (const button of [els.cfgBack, els.historyBack]) {
+    button.title = t("back");
+    button.setAttribute("aria-label", t("back"));
+  }
   els.openHistory.title = t("history");
   els.openHistory.setAttribute("aria-label", t("history"));
   els.historyTitle.textContent = t("history");
   els.historyHint.textContent = t("historyHint");
-  els.historyBack.title = t("back");
-  els.historyBack.setAttribute("aria-label", t("back"));
   els.historyScroll.setAttribute("aria-label", t("history"));
   els.historyRetry.textContent = t("retry");
   renderHistoryEntries();
@@ -388,9 +390,13 @@ function langLabel(code) {
   return a === b ? a : `${a} (${b})`;
 }
 
+function languageChoiceLabel(language) {
+  return language.label ?? langLabel(language.code);
+}
+
 function syncLanguagePicker(picker) {
-  const selected = LANGUAGES.findIndex((lang) => lang.value === picker.trigger.value);
-  picker.label.textContent = langLabel(LANGUAGES[selected].code);
+  const selected = picker.items.findIndex((lang) => lang.value === picker.trigger.value);
+  picker.label.textContent = languageChoiceLabel(picker.items[selected]);
   picker.trigger.setAttribute("aria-label", `${t(picker.labelKey)}: ${picker.label.textContent}`);
   picker.menu.setAttribute("aria-label", t(picker.labelKey));
   picker.options.forEach((option, index) => {
@@ -399,10 +405,10 @@ function syncLanguagePicker(picker) {
 }
 
 function renderLanguagePicker(picker) {
-  if (!LANGUAGES.some((lang) => lang.value === picker.trigger.value)) {
+  if (!picker.items.some((lang) => lang.value === picker.trigger.value)) {
     picker.trigger.value = picker.defaultValue;
   }
-  picker.options = LANGUAGES.map((lang, index) => {
+  picker.options = picker.items.map((lang, index) => {
     const option = document.createElement("div");
     option.id = `${picker.trigger.id}-option-${lang.code}`;
     option.className = "language-option";
@@ -411,7 +417,7 @@ function renderLanguagePicker(picker) {
     check.className = "language-check";
     check.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
-    label.textContent = langLabel(lang.code);
+    label.textContent = languageChoiceLabel(lang);
     option.appendChild(check);
     option.appendChild(label);
     option.addEventListener("pointermove", () => activateLanguageOption(picker, index, false));
@@ -456,16 +462,16 @@ function showLanguagePicker(picker, index) {
   picker.menu.hidden = false;
   picker.trigger.setAttribute("aria-expanded", "true");
   picker.trigger.focus();
-  activateLanguageOption(picker, index ?? LANGUAGES.findIndex((lang) => lang.value === picker.trigger.value));
+  activateLanguageOption(picker, index ?? picker.items.findIndex((lang) => lang.value === picker.trigger.value));
 }
 
 function chooseLanguage(picker, index) {
-  const value = LANGUAGES[index].value;
+  const value = picker.items[index].value;
   const changed = picker.trigger.value !== value;
   picker.trigger.value = value;
   syncLanguagePicker(picker);
   closeLanguagePicker(true);
-  if (changed) return persistLangs();
+  if (changed) return picker.onChange();
 }
 
 function onLanguageKeydown(picker, event) {
@@ -474,12 +480,12 @@ function onLanguageKeydown(picker, event) {
   if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
     event.preventDefault();
     if (!expanded) {
-      showLanguagePicker(picker, event.key === "Home" ? 0 : event.key === "End" ? LANGUAGES.length - 1 : undefined);
+      showLanguagePicker(picker, event.key === "Home" ? 0 : event.key === "End" ? picker.items.length - 1 : undefined);
     } else if (event.key === "Enter" || event.key === " ") {
       return chooseLanguage(picker, picker.activeIndex);
     } else {
-      const index = event.key === "Home" ? 0 : event.key === "End" ? LANGUAGES.length - 1
-        : Math.max(0, Math.min(LANGUAGES.length - 1, picker.activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
+      const index = event.key === "Home" ? 0 : event.key === "End" ? picker.items.length - 1
+        : Math.max(0, Math.min(picker.items.length - 1, picker.activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
       activateLanguageOption(picker, index);
     }
   } else if (event.key === "Tab") {
@@ -492,10 +498,10 @@ function onLanguageKeydown(picker, event) {
     picker.search = (now - picker.searchTime < 700 ? picker.search : "") + key;
     picker.searchTime = now;
     const find = (query) => {
-      for (let step = 1; step <= LANGUAGES.length; step++) {
-        const index = (picker.activeIndex + step) % LANGUAGES.length;
-        const lang = LANGUAGES[index];
-        if ([langLabel(lang.code), displayName(lang.code, lang.code), lang.value]
+      for (let step = 1; step <= picker.items.length; step++) {
+        const index = (picker.activeIndex + step) % picker.items.length;
+        const lang = picker.items[index];
+        if ([languageChoiceLabel(lang), displayName(lang.code, lang.code), lang.value]
           .some((label) => label.toLocaleLowerCase(currentLang).startsWith(query))) return index;
       }
       return -1;
@@ -509,13 +515,13 @@ function onLanguageKeydown(picker, event) {
   }
 }
 
-function createLanguagePicker(id, labelKey, defaultValue) {
+function createLanguagePicker(id, labelKey, defaultValue, items = LANGUAGES, onChange = persistLangs) {
   const picker = {
     root: document.querySelector(`#${id}-picker`),
     trigger: document.querySelector(`#${id}`),
     label: document.querySelector(`#${id}-label`),
     menu: document.querySelector(`#${id}-menu`),
-    labelKey, defaultValue, options: [], activeIndex: 0, search: "", searchTime: 0,
+    labelKey, defaultValue, items, onChange, options: [], activeIndex: 0, search: "", searchTime: 0,
   };
   picker.menu.hidden = true;
   picker.trigger.setAttribute("aria-expanded", "false");
@@ -525,17 +531,6 @@ function createLanguagePicker(id, labelKey, defaultValue) {
   });
   picker.trigger.addEventListener("keydown", (event) => onLanguageKeydown(picker, event));
   return picker;
-}
-
-// UI 语言下拉：每项用该语言的母语名显示
-function fillUiLangSelect(sel) {
-  sel.innerHTML = "";
-  for (const [code, dict] of Object.entries(I18N)) {
-    const o = document.createElement("option");
-    o.value = code;
-    o.textContent = dict._name;
-    sel.appendChild(o);
-  }
 }
 
 // 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
@@ -1017,6 +1012,11 @@ async function persistUiLang() {
   }
 }
 
+async function changeUiLanguage() {
+  applyLocale(els.cfgUiLang.value);
+  await persistUiLang();
+}
+
 // 语言切换后，把当前选择持久化，方便下次启动恢复
 async function persistLangs() {
   try {
@@ -1080,8 +1080,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   languagePickers = [
     createLanguagePicker("lang-a", "sourceLanguage", "Chinese"),
     createLanguagePicker("lang-b", "targetLanguage", "English"),
+    createLanguagePicker("cfg-ui-lang", "uiLangLabel", "zh", UI_LANGUAGES, changeUiLanguage),
   ];
-  fillUiLangSelect(els.cfgUiLang);
   els.langA.value = "Chinese";
   els.langB.value = "English";
   els.cfgUiLang.value = "zh";
@@ -1155,10 +1155,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   els.cfgBack.addEventListener("click", () => showPage("translate"));
 
   // 切换界面语言：立即刷新文案并持久化
-  els.cfgUiLang.addEventListener("change", async () => {
-    applyLocale(els.cfgUiLang.value);
-    await persistUiLang();
-  });
+  els.cfgUiLang.addEventListener("change", changeUiLanguage);
 
   // Close an open list before handling the flyout's Escape shortcut.
   document.addEventListener("pointerdown", (event) => {
