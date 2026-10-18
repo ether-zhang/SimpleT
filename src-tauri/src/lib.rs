@@ -32,7 +32,7 @@ use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize, Rect};
 #[cfg(target_os = "macos")]
 use objc2::{rc::Retained, runtime::AnyObject};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSEvent, NSEventMask, NSScreen, NSStatusWindowLevel, NSWindow};
+use objc2_app_kit::{NSEvent, NSEventMask, NSMenu, NSScreen, NSStatusWindowLevel, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{MainThreadMarker, NSPoint, NSSize};
 #[cfg(target_os = "macos")]
@@ -445,6 +445,8 @@ fn update_config(
 }
 
 struct TrayMenu {
+    #[cfg(target_os = "macos")]
+    menu: Menu<tauri::Wry>,
     translate: MenuItem<tauri::Wry>,
     settings: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
@@ -479,6 +481,48 @@ fn refresh_tray_locale(app: &tauri::AppHandle, ui_lang: &str) -> tauri::Result<(
         tray.set_tooltip(Some(tooltip))?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn popup_centered_macos_menu(menu: &impl tauri::menu::ContextMenu, anchor: MacosRect) -> bool {
+    // SAFETY: This runs on the main thread. Tauri owns the NSMenu, and the
+    // caller keeps its Menu alive throughout AppKit's nested tracking loop.
+    let Some(native_menu) = (unsafe { menu.inner_context().ns_menu().cast::<NSMenu>().as_ref() })
+    else {
+        return false;
+    };
+    // Measure on every opening so changing the UI language cannot shift the
+    // menu's center. AppKit handles clamping at the edges of the display.
+    native_menu.update();
+    let width = native_menu.size().width;
+    let top_left = NSPoint::new(anchor.x + (anchor.width - width) / 2.0, anchor.y);
+    native_menu.popUpMenuPositioningItem_atLocation_inView(None, top_left, None);
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_tray_menu(tray: &tauri::tray::TrayIcon) -> tauri::Result<()> {
+    let menu = tray.app_handle().state::<TrayMenu>().menu.clone();
+    tray.with_inner_tray_icon(move |inner| {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(button) = inner.ns_status_item().and_then(|item| item.button(mtm)) else {
+            return;
+        };
+        // The local event monitor captures the clicked status-item clone.
+        // Reading only the primary status button would target the wrong screen
+        // when a secondary display has its own menu bar.
+        let anchor = MACOS_CLICK_TARGET
+            .with(Cell::get)
+            .and_then(|target| target.status_item)
+            .or_else(|| button.window().map(|window| macos_rect(window.frame())));
+        button.highlight(true);
+        if !anchor.is_some_and(|anchor| popup_centered_macos_menu(&menu, anchor)) {
+            inner.show_menu();
+        }
+        button.highlight(false);
+    })
 }
 
 #[tauri::command]
@@ -1063,6 +1107,7 @@ struct MacosRect {
 struct MacosClickTarget {
     cursor_x: f64,
     visible_screen: MacosRect,
+    status_item: Option<MacosRect>,
     #[cfg(debug_assertions)]
     cursor_y: f64,
     #[cfg(debug_assertions)]
@@ -1103,6 +1148,7 @@ fn macos_target_from_screen(
     MacosClickTarget {
         cursor_x: cursor.x,
         visible_screen: macos_rect(screen.visibleFrame()),
+        status_item: None,
         #[cfg(debug_assertions)]
         cursor_y: cursor.y,
         #[cfg(debug_assertions)]
@@ -1126,7 +1172,9 @@ fn macos_target_from_event(event: &NSEvent) -> Option<MacosClickTarget> {
     // Bind the point to this exact mouse event. The status-item clone's window
     // is only reliable during native dispatch; the Tauri callback runs later.
     let cursor = window.convertPointToScreen(event.locationInWindow());
-    macos_target_at_point(cursor, Some(event), "local-monitor")
+    let mut target = macos_target_at_point(cursor, Some(event), "local-monitor")?;
+    target.status_item = Some(macos_rect(window.frame()));
+    Some(target)
 }
 
 #[cfg(target_os = "macos")]
@@ -1440,6 +1488,8 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&translate_i, &settings_i, &quit_i])?;
             app.manage(TrayMenu {
+                #[cfg(target_os = "macos")]
+                menu: menu.clone(),
                 translate: translate_i,
                 settings: settings_i,
                 quit: quit_i,
@@ -1459,6 +1509,19 @@ pub fn run() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
+
+                    #[cfg(target_os = "macos")]
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Right,
+                        button_state: MouseButtonState::Down,
+                        ..
+                    } = event
+                    {
+                        if let Err(error) = show_macos_tray_menu(tray) {
+                            eprintln!("SimpleT: failed to open tray menu: {error}");
+                        }
+                        return;
+                    }
 
                     #[cfg(not(target_os = "macos"))]
                     let rect = tray_event_rect(&event);
@@ -1496,6 +1559,9 @@ pub fn run() {
             if let Some(tray) = app.tray_by_id("main") {
                 // Use a compact logical size with the high-resolution tray image.
                 tray.with_inner_tray_icon(|inner| {
+                    // Open the native menu ourselves with a centered anchor,
+                    // instead of AppKit's default status-item edge alignment.
+                    inner.set_show_menu_on_right_click(false);
                     let Some(mtm) = MainThreadMarker::new() else {
                         return;
                     };
