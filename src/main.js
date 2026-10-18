@@ -1,5 +1,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+const isMac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+const translateShortcut = isMac ? "⌘ + ↵" : "Ctrl + ↵";
 
 // value 写入 system prompt（模型理解的英文名）；code 为 BCP-47，用于本地化显示名
 const LANGUAGES = [
@@ -189,6 +191,11 @@ function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
 }
 
+function updateTranslateHint() {
+  els.translateHint.textContent = translationInFlight ? t("translating") : translateShortcut;
+  els.translateBtn.setAttribute("aria-busy", String(translationInFlight));
+}
+
 // 按语言刷新所有界面文案
 function applyLocale(lang) {
   currentLang = I18N[lang] ? lang : "zh";
@@ -196,7 +203,8 @@ function applyLocale(lang) {
   els.swap.title = t("swapTitle");
   els.input.placeholder = t("inputPh");
   els.output.placeholder = t("outputPh");
-  els.translateBtn.textContent = t("translate");
+  els.translateLabel.textContent = t("translate");
+  updateTranslateHint();
   els.openSettings.textContent = t("settings");
   els.closeFlyout.title = t("closeTitle");
   els.closeFlyout.setAttribute("aria-label", t("closeTitle"));
@@ -388,10 +396,10 @@ async function doTranslate() {
   const langB = els.langB.value;
   const isCurrentInput = () =>
     els.input.value === text && els.langA.value === langA && els.langB.value === langB;
-  const progressMessage = t("translating");
   translationInFlight = true;
-  els.status.textContent = progressMessage;
+  els.status.textContent = "";
   els.translateBtn.disabled = true;
+  updateTranslateHint();
   try {
     const result = await invoke("translate", {
       text,
@@ -406,11 +414,9 @@ async function doTranslate() {
     els.output.value = "";
     els.status.textContent = String(e);
   } finally {
-    if (!isCurrentInput() && els.status.textContent === progressMessage) {
-      els.status.textContent = "";
-    }
     translationInFlight = false;
     els.translateBtn.disabled = false;
+    updateTranslateHint();
   }
 }
 
@@ -503,6 +509,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     input: document.querySelector("#input"),
     output: document.querySelector("#output"),
     translateBtn: document.querySelector("#translate-btn"),
+    translateLabel: document.querySelector("#translate-label"),
+    translateHint: document.querySelector("#translate-hint"),
     status: document.querySelector("#status"),
     cfgUrl: document.querySelector("#cfg-url"),
     cfgKey: document.querySelector("#cfg-key"),
@@ -520,6 +528,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     lblUiLang: document.querySelector("#lbl-uilang"),
   };
 
+  els.translateBtn.setAttribute("aria-keyshortcuts", isMac ? "Meta+Enter" : "Control+Enter");
   fillLangSelect(els.langA);
   fillLangSelect(els.langB);
   fillUiLangSelect(els.cfgUiLang);
@@ -554,7 +563,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     els.cfgKey.value = "";
     updateApiKeyUI();
   });
-  // Ctrl+Enter 快速翻译
+  // Command/Ctrl+Enter 快速翻译，输入法确认不触发提交。
   els.input.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {

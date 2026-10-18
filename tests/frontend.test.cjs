@@ -44,6 +44,7 @@ async function createApp(config = {}, options = {}) {
   }
 
   const context = {
+    navigator: { platform: options.platform || "Win32" },
     window: {
       __TAURI__: {
         core: { invoke: async (command, args) => {
@@ -113,12 +114,48 @@ test("an unchanged request updates the result and unlocks translation", async ()
   app.element("#input").value = "hello";
   const pending = app.translate();
   assert.equal(app.element("#translate-btn").disabled, true);
+  assert.equal(app.element("#translate-label").textContent, "翻译");
+  assert.equal(app.element("#translate-hint").textContent, "翻译中…");
+  assert.equal(app.element("#status").textContent, "");
   assert.equal(app.requests[0].args.langA, "English");
   app.requests[0].resolve("你好");
   await pending;
   assert.equal(app.element("#output").value, "你好");
   assert.equal(app.element("#status").textContent, "");
   assert.equal(app.element("#translate-btn").disabled, false);
+  assert.equal(app.element("#translate-hint").textContent, "Ctrl + ↵");
+});
+
+for (const [platform, shortcut, modifier] of [["MacIntel", "⌘ + ↵", "metaKey"], ["Win32", "Ctrl + ↵", "ctrlKey"]]) {
+  test(`the ${platform} shortcut hint matches keyboard submission`, async () => {
+    const app = await createApp({}, { platform });
+    assert.equal(app.element("#translate-hint").textContent, shortcut);
+    app.element("#input").value = "hello";
+    let prevented = false;
+    app.element("#input").dispatch("keydown", {
+      key: "Enter", [modifier]: true, preventDefault() { prevented = true; },
+    });
+    assert.equal(prevented, true);
+    assert.equal(app.requests.length, 1);
+    assert.equal(app.element("#translate-hint").textContent, "翻译中…");
+    assert.equal(app.element("#status").textContent, "");
+    app.requests[0].resolve("你好");
+    await new Promise(setImmediate);
+    assert.equal(app.element("#translate-hint").textContent, shortcut);
+  });
+}
+
+test("changing the UI language updates an in-flight hint and restores the shortcut", async () => {
+  const app = await createApp({}, { platform: "MacIntel" });
+  app.element("#input").value = "hello";
+  const pending = app.translate();
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.equal(app.element("#translate-label").textContent, "Translate");
+  assert.equal(app.element("#translate-hint").textContent, "Translating…");
+  app.requests[0].resolve("你好");
+  await pending;
+  assert.equal(app.element("#translate-hint").textContent, "⌘ + ↵");
 });
 
 test("swapping while a request is pending preserves the swapped content", async () => {
@@ -147,6 +184,7 @@ for (const changedField of ["#input", "#lang-a", "#lang-b"]) {
     await pending;
     assert.equal(app.element("#output").value, "keep this result");
     assert.equal(app.element("#translate-btn").disabled, false);
+    assert.equal(app.element("#translate-hint").textContent, "Ctrl + ↵");
   });
 }
 
@@ -170,6 +208,7 @@ test("a current request error is displayed and allows retry", async () => {
   await pending;
   assert.equal(app.element("#status").textContent, "request failed");
   assert.equal(app.element("#translate-btn").disabled, false);
+  assert.equal(app.element("#translate-hint").textContent, "Ctrl + ↵");
 });
 
 for (const composing of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
@@ -225,13 +264,14 @@ test("configuration read errors are visible and clear after explicit save", asyn
   assert.ok(app.commands.some(({ command }) => command === "save_config"));
 });
 
-test("saving settings does not clear an active translation's status", async () => {
+test("saving settings preserves the inline progress hint", async () => {
   const app = await createApp();
   app.element("#input").value = "hello";
   const pending = app.translate();
-  const progressMessage = app.element("#status").textContent;
+  const progressMessage = app.element("#translate-hint").textContent;
   await app.element("#cfg-save").dispatch("click");
-  assert.equal(app.element("#status").textContent, progressMessage);
+  assert.equal(app.element("#translate-hint").textContent, progressMessage);
+  assert.equal(app.element("#status").textContent, "");
   app.requests[0].resolve("你好");
   await pending;
 });
