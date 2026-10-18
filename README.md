@@ -10,6 +10,7 @@ SimpleT 是一个轻量级桌面托盘翻译工具，基于 Tauri 构建。它�
 - OpenAI-compatible endpoint, API key, and model settings / 支持配置兼容 OpenAI 的接口、API Key 和模型名
 - Bidirectional language swap / 支持源语言和目标语言互换
 - Localized UI language selection / 支持界面语言切换
+- Appearance switching between Default and Liquid Glass, applied immediately and remembered / 外观支持默认与液态玻璃，即时切换并记住选择
 - Local translation history: newest at the bottom, scroll upward for older entries / 本地翻译历史：最新记录在底部，向上滚动查看更早的记录
 - Persistent flyout: click the tray icon or × to hide it; clicking elsewhere keeps it open / 浮窗保持显示，点击托盘图标或 × 收起，点击其他位置不会收起
 
@@ -67,6 +68,10 @@ Also check opening Settings immediately after launch, repeated tray clicks durin
 同时检查启动后立即打开设置、收起动画中重复点击托盘不会重新拉起、保存期间编辑或清除 API Key，以及无需重启的托盘语言更新。保存期间新增的编辑会保留为未保存草稿。
 
 ## Configuration / 配置
+
+Settings includes an Appearance menu with Default and Liquid Glass. Changing appearance saves only this preference, so unfinished API or model edits remain drafts. Liquid Glass combines a borderless native frosted backdrop (Popover on macOS, Acrylic on Windows) with shared glass highlights and surfaces in the WebView. Material is prepared before showing the window and retained between openings. On macOS one native mask reveals the backdrop and HTML together; opening, waiting, or expanding a dropdown never replaces the material or control styling. Default removes the material and restores the opaque appearance. See [Tauri window effects](https://v2.tauri.app/reference/javascript/api/namespacewindow/#effect) for platform support.
+
+设置中的“外观”提供“默认”和“液态玻璃”。切换会立即应用并单独保存，不会连带保存尚未完成的 API 或模型配置。液态玻璃由无描边的原生磨砂底层和统一的玻璃控件样式组成，底层在 macOS 使用 Popover、Windows 使用 Acrylic。材质在窗口显示前准备好，关闭后保留供下次使用；macOS 用同一个原生遮罩展开磨砂底层和网页内容，动画结束或展开下拉菜单时不会重新替换材质。切回默认会移除原生材质并恢复实色界面。
 
 Successful translations are saved automatically to `history.json` in the application's local data directory. Use the history button below Settings to browse the original text, translation, languages, and time. History is loaded in batches as you scroll upward and is retained across restarts. Failed requests are not recorded. An unreadable history file is preserved and reported in the history page.
 

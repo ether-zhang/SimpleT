@@ -26,6 +26,10 @@ const LANGUAGES = [
 const I18N = {
   zh: {
     _name: "中文",
+    appearanceLabel: "外观",
+    appearanceDefault: "默认",
+    appearanceGlass: "液态玻璃",
+    appearanceError: "外观设置失败",
     history: "历史记录",
     historyHint: "向上查看更早记录",
     historyEmpty: "还没有历史记录，完成翻译后会自动保存在这里",
@@ -63,6 +67,10 @@ const I18N = {
   },
   en: {
     _name: "English",
+    appearanceLabel: "Appearance",
+    appearanceDefault: "Default",
+    appearanceGlass: "Liquid Glass",
+    appearanceError: "Unable to update appearance",
     history: "History",
     historyHint: "Scroll up for older translations",
     historyEmpty: "Completed translations will appear here",
@@ -100,6 +108,10 @@ const I18N = {
   },
   ja: {
     _name: "日本語",
+    appearanceLabel: "外観",
+    appearanceDefault: "デフォルト",
+    appearanceGlass: "Liquid Glass",
+    appearanceError: "外観を変更できません",
     history: "履歴",
     historyHint: "上にスクロールして過去の翻訳を表示",
     historyEmpty: "翻訳が完了すると、ここに保存されます",
@@ -137,6 +149,10 @@ const I18N = {
   },
   ko: {
     _name: "한국어",
+    appearanceLabel: "모양",
+    appearanceDefault: "기본",
+    appearanceGlass: "리퀴드 글래스",
+    appearanceError: "모양을 변경할 수 없습니다",
     history: "기록",
     historyHint: "위로 스크롤하여 이전 번역 보기",
     historyEmpty: "완료된 번역이 여기에 저장됩니다",
@@ -174,6 +190,10 @@ const I18N = {
   },
   fr: {
     _name: "Français",
+    appearanceLabel: "Apparence",
+    appearanceDefault: "Par défaut",
+    appearanceGlass: "Liquid Glass",
+    appearanceError: "Impossible de modifier l’apparence",
     history: "Historique",
     historyHint: "Défiler vers le haut pour les anciennes traductions",
     historyEmpty: "Les traductions terminées apparaîtront ici",
@@ -211,6 +231,10 @@ const I18N = {
   },
   de: {
     _name: "Deutsch",
+    appearanceLabel: "Darstellung",
+    appearanceDefault: "Standard",
+    appearanceGlass: "Liquid Glass",
+    appearanceError: "Darstellung kann nicht geändert werden",
     history: "Verlauf",
     historyHint: "Für ältere Übersetzungen nach oben scrollen",
     historyEmpty: "Abgeschlossene Übersetzungen erscheinen hier",
@@ -248,6 +272,10 @@ const I18N = {
   },
   es: {
     _name: "Español",
+    appearanceLabel: "Apariencia",
+    appearanceDefault: "Predeterminada",
+    appearanceGlass: "Liquid Glass",
+    appearanceError: "No se pudo cambiar la apariencia",
     history: "Historial",
     historyHint: "Desplázate hacia arriba para ver traducciones anteriores",
     historyEmpty: "Las traducciones completadas aparecerán aquí",
@@ -285,6 +313,10 @@ const I18N = {
   },
   ru: {
     _name: "Русский",
+    appearanceLabel: "Оформление",
+    appearanceDefault: "По умолчанию",
+    appearanceGlass: "Жидкое стекло",
+    appearanceError: "Не удалось изменить оформление",
     history: "История",
     historyHint: "Прокрутите вверх для просмотра старых переводов",
     historyEmpty: "Завершённые переводы появятся здесь",
@@ -327,6 +359,10 @@ let els = {};
 let languagePickers = [];
 let openLanguagePicker = null;
 const UI_LANGUAGES = Object.entries(I18N).map(([code, dict]) => ({ value: code, code, label: dict._name }));
+const APPEARANCES = [
+  { value: "default", labelKey: "appearanceDefault" },
+  { value: "liquid_glass", labelKey: "appearanceGlass" },
+];
 
 function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
@@ -356,6 +392,7 @@ function applyLocale(lang) {
   els.cfgKeyClear.textContent = t("clearKey");
   els.lblModel.textContent = t("modelLabel");
   els.lblUiLang.textContent = t("uiLangLabel");
+  els.lblAppearance.textContent = t("appearanceLabel");
   els.cfgSave.textContent = t("save");
   for (const button of [els.cfgBack, els.historyBack]) {
     button.title = t("back");
@@ -391,6 +428,7 @@ function langLabel(code) {
 }
 
 function languageChoiceLabel(language) {
+  if (language.labelKey) return t(language.labelKey);
   return language.label ?? langLabel(language.code);
 }
 
@@ -410,7 +448,7 @@ function renderLanguagePicker(picker) {
   }
   picker.options = picker.items.map((lang, index) => {
     const option = document.createElement("div");
-    option.id = `${picker.trigger.id}-option-${lang.code}`;
+    option.id = `${picker.trigger.id}-option-${lang.code || lang.value}`;
     option.className = "language-option";
     option.setAttribute("role", "option");
     const check = document.createElement("span");
@@ -501,7 +539,7 @@ function onLanguageKeydown(picker, event) {
       for (let step = 1; step <= picker.items.length; step++) {
         const index = (picker.activeIndex + step) % picker.items.length;
         const lang = picker.items[index];
-        if ([languageChoiceLabel(lang), displayName(lang.code, lang.code), lang.value]
+        if ([languageChoiceLabel(lang), ...(lang.code ? [displayName(lang.code, lang.code)] : []), lang.value]
           .some((label) => label.toLocaleLowerCase(currentLang).startsWith(query))) return index;
       }
       return -1;
@@ -557,6 +595,11 @@ let resultRevision = 0;
 let copied = false;
 let copyFeedbackTimer = null;
 let clipboardStatus = "";
+let currentAppearance = "default";
+let appearanceRevision = 0;
+let appearanceStatus = "";
+let windowAppearanceRevision = 0;
+let nativeReveal = false;
 let historyEntries = [];
 let historyPendingEntries = [];
 let historyHasMore = false;
@@ -860,12 +903,21 @@ function slideIn(origin) {
   hideTimer = null;
   cancelSlideInFrames();
   prepareSlideIn(origin);
+  const generation = flyoutGeneration;
   // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
   firstOpenFrame = requestAnimationFrame(() => {
     firstOpenFrame = null;
     secondOpenFrame = requestAnimationFrame(() => {
       secondOpenFrame = null;
       els.card.classList.add("show");
+      if (nativeReveal) {
+        invoke("reveal_flyout", { generation }).catch((error) => {
+          if (generation === flyoutGeneration && !closeRequested) {
+            appearanceStatus = `${t("appearanceError")}: ${error}`;
+            showConfigStatus(appearanceStatus);
+          }
+        });
+      }
     });
   });
 }
@@ -958,6 +1010,7 @@ async function loadConfigIntoUI() {
   els.langA.value = cfg.lang_a || "Chinese";
   els.langB.value = cfg.lang_b || "English";
   els.cfgUiLang.value = cfg.ui_lang || "zh";
+  applyAppearance(cfg.appearance);
   applyLocale(els.cfgUiLang.value);
   configLoadError = cfg.load_error || "";
   showConfigStatus(configLoadError);
@@ -974,6 +1027,7 @@ async function saveConfig() {
     lang_a: els.langA.value,
     lang_b: els.langB.value,
     ui_lang: els.cfgUiLang.value,
+    appearance: els.cfgAppearance.value,
   };
   configSaveInFlight = true;
   els.cfgSave.disabled = true;
@@ -981,7 +1035,8 @@ async function saveConfig() {
     await queueConfigWrite("save_config", { config });
     const manualDraftUnchanged = apiKeyRevision === keyRevision
       && els.cfgUrl.value.trim() === config.base_url
-      && els.cfgModel.value.trim() === config.model;
+      && els.cfgModel.value.trim() === config.model
+      && els.cfgAppearance.value === config.appearance;
     if (config.api_key !== null) {
       apiKeyConfigured = Boolean(config.api_key);
     }
@@ -1015,6 +1070,61 @@ async function persistUiLang() {
 async function changeUiLanguage() {
   applyLocale(els.cfgUiLang.value);
   await persistUiLang();
+}
+
+function applyAppearance(value) {
+  currentAppearance = APPEARANCES.some((option) => option.value === value) ? value : "default";
+  els.cfgAppearance.value = currentAppearance;
+  document.documentElement.setAttribute("data-appearance", currentAppearance);
+  const picker = languagePickers.find((item) => item.trigger === els.cfgAppearance);
+  if (picker) syncLanguagePicker(picker);
+}
+
+function applyNativeReveal(enabled) {
+  // Always release a mask the backend prepared, even if a simultaneous preference
+  // change made the opaque renderer current before this navigation arrived.
+  nativeReveal = enabled === true;
+  document.documentElement.setAttribute("data-native-reveal", String(nativeReveal));
+}
+
+async function syncWindowAppearance(revision = appearanceRevision) {
+  if (!els.card.classList.contains("show") || closeRequested) return;
+  const generation = flyoutGeneration;
+  const nativeRevision = ++windowAppearanceRevision;
+  try {
+    // Only explicit appearance changes update material. Opening already prepared
+    // it before the native window became visible; transitionend does no setup.
+    const native = await invoke("set_window_appearance", {
+      appearance: currentAppearance, generation, revision: nativeRevision,
+    });
+    if (revision === appearanceRevision && generation === flyoutGeneration
+      && nativeRevision === windowAppearanceRevision && !closeRequested) {
+      applyNativeReveal(native);
+    }
+  } catch (error) {
+    if (revision === appearanceRevision && generation === flyoutGeneration
+      && nativeRevision === windowAppearanceRevision && !closeRequested) {
+      appearanceStatus = `${t("appearanceError")}: ${error}`;
+      showConfigStatus(appearanceStatus);
+    }
+  }
+}
+
+async function changeAppearance() {
+  const revision = ++appearanceRevision;
+  applyAppearance(els.cfgAppearance.value);
+  if (appearanceStatus && els.cfgStatus.textContent === appearanceStatus) showConfigStatus("");
+  appearanceStatus = "";
+  const nativeUpdate = syncWindowAppearance(revision);
+  try {
+    await queueConfigWrite("save_appearance", { appearance: currentAppearance });
+  } catch (error) {
+    if (revision === appearanceRevision) {
+      appearanceStatus = `${t("appearanceError")}: ${error}`;
+      showConfigStatus(appearanceStatus);
+    }
+  }
+  await nativeUpdate;
 }
 
 // 语言切换后，把当前选择持久化，方便下次启动恢复
@@ -1065,6 +1175,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     cfgKeyClear: document.querySelector("#cfg-key-clear"),
     cfgModel: document.querySelector("#cfg-model"),
     cfgUiLang: document.querySelector("#cfg-ui-lang"),
+    cfgAppearance: document.querySelector("#cfg-appearance"),
     openSettings: document.querySelector("#open-settings"),
     cfgSave: document.querySelector("#cfg-save"),
     cfgBack: document.querySelector("#cfg-back"),
@@ -1074,17 +1185,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     lblKey: document.querySelector("#lbl-key"),
     lblModel: document.querySelector("#lbl-model"),
     lblUiLang: document.querySelector("#lbl-uilang"),
+    lblAppearance: document.querySelector("#lbl-appearance"),
   };
 
   els.translateBtn.setAttribute("aria-keyshortcuts", isMac ? "Meta+Enter" : "Control+Enter");
+  // AppKit supplies desktop blur. A second WebKit backdrop filter changes its
+  // compositing when a clip animation or language dropdown becomes a layer.
+  document.documentElement.setAttribute("data-native-backdrop", String(isMac));
   languagePickers = [
     createLanguagePicker("lang-a", "sourceLanguage", "Chinese"),
     createLanguagePicker("lang-b", "targetLanguage", "English"),
     createLanguagePicker("cfg-ui-lang", "uiLangLabel", "zh", UI_LANGUAGES, changeUiLanguage),
+    createLanguagePicker("cfg-appearance", "appearanceLabel", "default", APPEARANCES, changeAppearance),
   ];
   els.langA.value = "Chinese";
   els.langB.value = "English";
   els.cfgUiLang.value = "zh";
+  applyAppearance("default");
   applyLocale("zh");
   updateApiKeyUI();
 
@@ -1094,6 +1211,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       const page = typeof payload === "string" ? payload : payload?.page;
       const origin = typeof payload === "string" ? "bottom" : payload?.origin;
       flyoutGeneration = payload?.generation ?? flyoutGeneration;
+      applyNativeReveal(payload?.nativeReveal);
+      if (payload?.appearanceError) {
+        appearanceStatus = `${t("appearanceError")}: ${payload.appearanceError}`;
+        showConfigStatus(appearanceStatus);
+      }
       showPage(page || "translate");
       slideIn(origin || "bottom");
     }),
@@ -1156,6 +1278,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // 切换界面语言：立即刷新文案并持久化
   els.cfgUiLang.addEventListener("change", changeUiLanguage);
+  els.cfgAppearance.addEventListener("change", changeAppearance);
 
   // Close an open list before handling the flyout's Escape shortcut.
   document.addEventListener("pointerdown", (event) => {

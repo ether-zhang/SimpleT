@@ -559,13 +559,19 @@ body {
 
 /* ---- 设置页 ---- */
 #page-settings {
-  gap: 12px;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+#page-settings > * {
+  flex-shrink: 0;
 }
 #page-settings label,
 .settings-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   font-size: 13px;
   color: var(--muted);
 }
@@ -595,8 +601,14 @@ body {
 }
 .settings-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
   margin-top: 4px;
+}
+.settings-actions .status {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .secondary {
   min-height: 40px;
@@ -623,5 +635,133 @@ body {
   }
   #output {
     background: #262626;
+  }
+}
+
+/* A borderless frosted base, with separate raised glass controls. */
+:root[data-appearance="liquid_glass"] {
+  --fg: #20232e;
+  --muted: #656774;
+  --border: rgba(125, 129, 151, 0.18);
+  --frosted-fill: rgba(255, 255, 255, 0.43);
+  --frosted-sheen: radial-gradient(ellipse 65% 100% at 50% 38%, rgba(255, 255, 255, 0.10), transparent 85%),
+    radial-gradient(ellipse 50% 60% at 100% 100%, rgba(210, 230, 255, 0.025), transparent 80%);
+  --glass-fill: radial-gradient(ellipse at 12% 0%, rgba(255, 255, 255, 0.58), transparent 58%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.12) 55%, rgba(255, 255, 255, 0.28));
+  --glass-rim: rgba(255, 255, 255, 0.90);
+  --glass-rim-low: rgba(255, 255, 255, 0.46);
+  --glass-glow: rgba(255, 255, 255, 0.65);
+  --glass-shadow: rgba(43, 45, 73, 0.10);
+  --glass-hover: rgba(255, 255, 255, 0.16);
+  --glass-menu: rgba(248, 249, 255, 0.82);
+  --glass-focus: rgba(47, 112, 241, 0.55);
+  --glass-relief: inset 0 1px 1px var(--glass-rim), inset 1px 0 1px var(--glass-rim-low),
+    inset 0 -0.5px 0.5px var(--glass-rim-low), inset -1px 0 2px rgba(255, 255, 255, 0.12),
+    inset 0 3px 9px var(--glass-glow), 0 2px 6px var(--glass-shadow);
+}
+:root[data-appearance="liquid_glass"] .card {
+  border-color: transparent;
+  background: var(--frosted-sheen), var(--frosted-fill);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(32px) saturate(1.3);
+  backdrop-filter: blur(32px) saturate(1.3);
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="true"] .card {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* AppKit clips both the frost and HTML with one persistent native mask. */
+:root[data-appearance="liquid_glass"][data-native-reveal="true"] .card {
+  clip-path: none;
+  transition: none;
+  will-change: auto;
+}
+:root[data-appearance="liquid_glass"] .page {
+  padding: 14px;
+}
+:root[data-appearance="liquid_glass"] :is(.pane, .lang-select, .swap, .secondary, .translate-btn, #open-history, .page-back, .history-entry, :where(#page-settings) input) {
+  border: 1px solid transparent;
+  background: var(--glass-fill);
+  box-shadow: var(--glass-relief);
+}
+:root[data-appearance="liquid_glass"] :is(.lang-select, .swap, .secondary, #open-history, :where(#page-settings) input) {
+  border-radius: 999px;
+}
+:root[data-appearance="liquid_glass"] .lang-select {
+  padding-right: 14px;
+  padding-left: 14px;
+}
+:root[data-appearance="liquid_glass"] .pane {
+  padding: 12px;
+  border-radius: 18px;
+}
+:root[data-appearance="liquid_glass"] .history-entry {
+  padding: 16px;
+  border-radius: 20px;
+}
+:root[data-appearance="liquid_glass"] .page-back {
+  border-radius: 50%;
+}
+:root[data-appearance="liquid_glass"] :is(#translate-btn, #cfg-save) {
+  border-radius: 22px;
+  background: radial-gradient(ellipse at 20% 0%, rgba(192, 220, 255, 0.45), transparent 65%),
+    linear-gradient(160deg, rgba(56, 134, 252, 0.88), rgba(38, 99, 224, 0.78));
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.72), inset 0 -1px 1px rgba(186, 213, 255, 0.36),
+    0 2px 8px rgba(25, 69, 168, 0.18);
+}
+:root[data-appearance="liquid_glass"] :is(.lang-select, .swap, .secondary, #open-history, .page-back):hover {
+  background-color: var(--glass-hover);
+}
+:root[data-appearance="liquid_glass"] :is(.pane, :where(#page-settings) input):focus {
+  box-shadow: inset 0 0 0 1px var(--glass-focus), var(--glass-relief);
+}
+:root[data-appearance="liquid_glass"] .language-menu {
+  padding: 6px;
+  border-color: transparent;
+  border-radius: 18px;
+  background: var(--glass-menu);
+  box-shadow: var(--glass-relief), 0 12px 32px var(--glass-shadow);
+  -webkit-backdrop-filter: blur(32px) saturate(1.3);
+  backdrop-filter: blur(32px) saturate(1.3);
+}
+:root[data-appearance="liquid_glass"] .language-option {
+  border-radius: 12px;
+}
+:root[data-appearance="liquid_glass"] .pane::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-appearance="liquid_glass"] {
+    --fg: #f4f4fa;
+    --muted: #b9b9c9;
+    --border: rgba(218, 219, 242, 0.14);
+    --frosted-fill: rgba(86, 86, 112, 0.42);
+    --frosted-sheen: radial-gradient(ellipse 65% 100% at 50% 38%, rgba(255, 255, 255, 0.065), transparent 85%),
+      radial-gradient(ellipse 50% 60% at 100% 100%, rgba(210, 230, 255, 0.025), transparent 80%);
+    --glass-fill: radial-gradient(ellipse at 12% 0%, rgba(230, 233, 255, 0.14), transparent 58%),
+      linear-gradient(160deg, rgba(187, 190, 222, 0.20), rgba(163, 166, 198, 0.11) 55%, rgba(206, 209, 238, 0.18));
+    --glass-rim: rgba(237, 239, 255, 0.56);
+    --glass-rim-low: rgba(219, 221, 249, 0.24);
+    --glass-glow: rgba(208, 215, 255, 0.09);
+    --glass-shadow: rgba(7, 7, 17, 0.16);
+    --glass-hover: rgba(224, 226, 255, 0.09);
+    --glass-menu: rgba(68, 68, 91, 0.84);
+    --glass-focus: rgba(127, 172, 255, 0.56);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-appearance="liquid_glass"] .card {
+    background: Canvas;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  :root[data-appearance="liquid_glass"] :is(.pane, .lang-select, .swap, .secondary, #open-history, .page-back, .history-entry, :where(#page-settings) input, .language-menu) {
+    background: Canvas;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  :root[data-appearance="liquid_glass"] :is(#translate-btn, #cfg-save) {
+    background: var(--accent);
   }
 }

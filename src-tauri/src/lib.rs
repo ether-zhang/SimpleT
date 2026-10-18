@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+mod glass;
 mod history;
 use history::{HistoryPage, HistoryStore};
 
@@ -71,6 +72,14 @@ fn default_ui_lang() -> String {
     "zh".into()
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Appearance {
+    #[default]
+    Default,
+    LiquidGlass,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     base_url: String,
@@ -81,6 +90,8 @@ struct Config {
     // Added later; `serde(default)` keeps older config.json (without it) loadable.
     #[serde(default = "default_ui_lang")]
     ui_lang: String,
+    #[serde(default)]
+    appearance: Appearance,
 }
 
 #[derive(Serialize)]
@@ -90,6 +101,7 @@ struct ConfigView {
     lang_a: String,
     lang_b: String,
     ui_lang: String,
+    appearance: Appearance,
     api_key_configured: bool,
     load_error: Option<String>,
 }
@@ -102,6 +114,7 @@ impl From<&Config> for ConfigView {
             lang_a: config.lang_a.clone(),
             lang_b: config.lang_b.clone(),
             ui_lang: config.ui_lang.clone(),
+            appearance: config.appearance,
             api_key_configured: !config.api_key.trim().is_empty(),
             load_error: None,
         }
@@ -116,6 +129,8 @@ struct ConfigUpdate {
     lang_a: String,
     lang_b: String,
     ui_lang: String,
+    #[serde(default)]
+    appearance: Option<Appearance>,
 }
 
 fn apply_config_update(current: &mut Config, update: ConfigUpdate) {
@@ -124,6 +139,9 @@ fn apply_config_update(current: &mut Config, update: ConfigUpdate) {
     current.lang_a = update.lang_a;
     current.lang_b = update.lang_b;
     current.ui_lang = update.ui_lang;
+    if let Some(appearance) = update.appearance {
+        current.appearance = appearance;
+    }
     if let Some(api_key) = update.api_key {
         current.api_key = api_key;
     }
@@ -181,6 +199,7 @@ struct AppState {
     last_rect: Mutex<Option<Rect>>,
     config: Mutex<ConfigState>,
     flyout: Mutex<FlyoutState>,
+    native_appearance: Mutex<NativeAppearanceState>,
 }
 
 impl AppState {
@@ -190,7 +209,35 @@ impl AppState {
             last_rect: Mutex::new(None),
             config: Mutex::new(config),
             flyout: Mutex::new(FlyoutState::default()),
+            native_appearance: Mutex::new(NativeAppearanceState::default()),
         }
+    }
+}
+
+#[derive(Default)]
+struct NativeAppearanceState {
+    generation: u32,
+    revision: u32,
+    requested: Option<Appearance>,
+    applied: Option<Appearance>,
+}
+
+impl NativeAppearanceState {
+    fn accept(&mut self, generation: u32, revision: u32) -> bool {
+        if self.generation == generation && revision < self.revision {
+            return false;
+        }
+        self.generation = generation;
+        self.revision = revision;
+        true
+    }
+
+    fn select(&mut self, generation: u32, revision: u32, appearance: Appearance) -> bool {
+        if !self.accept(generation, revision) {
+            return false;
+        }
+        self.requested = Some(appearance);
+        true
     }
 }
 
@@ -305,6 +352,7 @@ impl Default for Config {
             lang_a: "Chinese".into(),
             lang_b: "English".into(),
             ui_lang: default_ui_lang(),
+            appearance: Appearance::default(),
         }
     }
 }
@@ -441,6 +489,181 @@ fn save_ui_lang(app: tauri::AppHandle, ui_lang: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn save_appearance(app: tauri::AppHandle, appearance: Appearance) -> Result<(), String> {
+    update_config(&app, false, |config| config.appearance = appearance)
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn appearance_effects(appearance: Appearance) -> Option<tauri::utils::config::WindowEffectsConfig> {
+    use tauri::window::{Effect, EffectState, EffectsBuilder};
+    (appearance == Appearance::LiquidGlass).then(|| {
+        EffectsBuilder::new()
+            // Native frost sits behind the shared HTML glass styling.
+            .effects([Effect::Popover, Effect::Acrylic])
+            .state(EffectState::Active)
+            .radius(14.0)
+            .build()
+    })
+}
+
+// Called on the UI thread. Cache the installed material across close/reopen so
+// neither a CSS transition nor a dropdown can replace the backdrop later.
+fn apply_window_appearance(
+    window: &tauri::WebviewWindow,
+    native: &mut NativeAppearanceState,
+    appearance: Appearance,
+) -> Result<bool, String> {
+    if native.applied != Some(appearance) {
+        #[cfg(target_os = "macos")]
+        glass::set_appearance(window, appearance == Appearance::LiquidGlass)?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            let effects = appearance_effects(appearance);
+            #[cfg(target_os = "windows")]
+            let effects = effects.map(|mut effects| {
+                effects.color = Some(if window.theme().ok() == Some(tauri::Theme::Dark) {
+                    tauri::window::Color(24, 27, 35, 150)
+                } else {
+                    tauri::window::Color(242, 246, 252, 150)
+                });
+                effects
+            });
+            window
+                .set_effects(effects)
+                .map_err(|error| error.to_string())?;
+        }
+        native.applied = Some(appearance);
+    }
+    Ok(cfg!(target_os = "macos") && appearance == Appearance::LiquidGlass)
+}
+
+fn prepare_flyout_appearance(
+    window: &tauri::WebviewWindow,
+    generation: u32,
+) -> (bool, Option<String>) {
+    let result = (|| {
+        let state = window.state::<AppState>();
+        let mut native = state
+            .native_appearance
+            .lock()
+            .map_err(|_| "外观状态不可用")?;
+        // Preserve a currently previewed preference even if its disk save failed.
+        let appearance = native.requested.unwrap_or_else(|| {
+            state
+                .config
+                .lock()
+                .map(|config| config.current.appearance)
+                .unwrap_or_default()
+        });
+        native.accept(generation, 0);
+        let native_reveal = apply_window_appearance(window, &mut native, appearance)?;
+        #[cfg(target_os = "macos")]
+        if native_reveal {
+            glass::set_reveal(window, false, false)?;
+        }
+        Ok::<_, String>(native_reveal)
+    })();
+    match result {
+        Ok(native_reveal) => (native_reveal, None),
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            let _ = glass::set_appearance(window, false);
+            if let Ok(mut native) = window.state::<AppState>().native_appearance.lock() {
+                native.applied = None;
+            }
+            (false, Some(error))
+        }
+    }
+}
+
+#[tauri::command]
+async fn set_window_appearance(
+    app: tauri::AppHandle,
+    appearance: Appearance,
+    generation: u32,
+    revision: u32,
+) -> Result<bool, String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<bool, String> {
+            let state = handle.state::<AppState>();
+            let (current, visible) = state
+                .flyout
+                .lock()
+                .map(|state| {
+                    (
+                        state.generation == generation,
+                        state.visible && !state.closing,
+                    )
+                })
+                .unwrap_or((false, false));
+            let mut native = state
+                .native_appearance
+                .lock()
+                .map_err(|_| "外观状态不可用")?;
+            if !current || !native.select(generation, revision, appearance) || !visible {
+                return Ok(false);
+            }
+            let window = handle.get_webview_window("main").ok_or("窗口不可用")?;
+            apply_window_appearance(&window, &mut native, appearance)
+        })();
+        let _ = sender.try_send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or_else(|| "外观更新已中断".to_string())?
+}
+
+#[tauri::command]
+async fn reveal_flyout(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let visible = state
+            .flyout
+            .lock()
+            .map(|state| state.visible && !state.closing && state.generation == generation)
+            .unwrap_or(false);
+        let result;
+        #[cfg(target_os = "macos")]
+        {
+            result = if visible
+                && state
+                    .native_appearance
+                    .lock()
+                    .map(|state| {
+                        state.generation == generation
+                            && state.applied == Some(Appearance::LiquidGlass)
+                    })
+                    .unwrap_or(false)
+            {
+                handle
+                    .get_webview_window("main")
+                    .ok_or("窗口不可用".into())
+                    .and_then(|window| glass::set_reveal(&window, true, true))
+            } else {
+                Ok(())
+            };
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = visible;
+            result = Ok(());
+        }
+        let _ = sender.try_send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or_else(|| "窗口展开已中断".to_string())?
+}
+
+#[tauri::command]
 fn save_languages(app: tauri::AppHandle, lang_a: String, lang_b: String) -> Result<(), String> {
     update_config(&app, false, |config| {
         config.lang_a = lang_a;
@@ -456,6 +679,18 @@ fn request_flyout_hide(app: &tauri::AppHandle, expected_generation: Option<u32>)
         .ok()
         .and_then(|mut focus| focus.request_hide(expected_generation));
     if let (Some(generation), Some(window)) = (generation, app.get_webview_window("main")) {
+        // The same native mask clips the frost and HTML during the whole close.
+        // Keep the material installed so a quick reopen never changes its tone.
+        #[cfg(target_os = "macos")]
+        if app
+            .state::<AppState>()
+            .native_appearance
+            .lock()
+            .map(|native| native.applied == Some(Appearance::LiquidGlass))
+            .unwrap_or(false)
+        {
+            let _ = glass::set_reveal(&window, false, true);
+        }
         let _ = window.emit(
             "flyout-hide",
             serde_json::json!({ "generation": generation }),
@@ -1016,7 +1251,9 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             }
             // Restore the WebView as first responder after changing the window
             // style, then focus the non-activating panel for keyboard/IME input.
-            match to_flyout_panel(&w) {
+            let panel = to_flyout_panel(&w);
+            let (native_reveal, appearance_error) = prepare_flyout_appearance(&w, generation);
+            match panel {
                 Some(panel) => {
                     panel.show();
                     let webview: &tauri::Webview = w.as_ref();
@@ -1036,6 +1273,8 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                     "page": page,
                     "origin": FlyoutOrigin::Top.as_str(),
                     "generation": generation,
+                    "nativeReveal": native_reveal,
+                    "appearanceError": appearance_error,
                 }),
             );
         }
@@ -1043,18 +1282,31 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
         #[cfg(not(target_os = "macos"))]
         {
             let origin = position_flyout(&w, last_tray_rect(app));
-            let _ = w.show();
-            let _ = w.unminimize();
-            let _ = w.set_focus();
-            // The frontend uses this to pick the matching slide direction.
-            let _ = w.emit(
-                "navigate",
-                serde_json::json!({
-                    "page": page,
-                    "origin": origin.as_str(),
-                    "generation": generation,
-                }),
-            );
+            let (_, appearance_error) = prepare_flyout_appearance(&w, generation);
+            let window = w.clone();
+            let page = page.to_owned();
+            // set_effects queues platform work. Show only after that queued work.
+            let _ = w.run_on_main_thread(move || {
+                let current = window
+                    .state::<AppState>()
+                    .flyout
+                    .lock()
+                    .map(|state| state.visible && !state.closing && state.generation == generation)
+                    .unwrap_or(false);
+                if !current {
+                    return;
+                }
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                let _ = window.emit(
+                    "navigate",
+                    serde_json::json!({
+                        "page": page, "origin": origin.as_str(), "generation": generation,
+                        "nativeReveal": false, "appearanceError": appearance_error,
+                    }),
+                );
+            });
         }
     }
 }
@@ -1073,6 +1325,9 @@ pub fn run() {
             load_config,
             save_config,
             save_ui_lang,
+            save_appearance,
+            set_window_appearance,
+            reveal_flyout,
             save_languages,
             load_history,
             translate,
@@ -1197,10 +1452,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_config_update, extract_translation, macos_flyout_top_left, read_config_from_path,
-        translation_request_body, translation_system_prompt, translation_user_message,
-        write_config_to_path, Config, ConfigState, ConfigUpdate, FlyoutAction, FlyoutState,
-        MacosRect,
+        appearance_effects, apply_config_update, extract_translation, macos_flyout_top_left,
+        read_config_from_path, translation_request_body, translation_system_prompt,
+        translation_user_message, write_config_to_path, Appearance, Config, ConfigState,
+        ConfigUpdate, ConfigView, FlyoutAction, FlyoutState, MacosRect, NativeAppearanceState,
     };
     use serde_json::json;
     use std::fs;
@@ -1571,6 +1826,7 @@ mod tests {
             lang_a: "English".into(),
             lang_b: "Chinese".into(),
             ui_lang: "en".into(),
+            appearance: None,
         };
 
         apply_config_update(&mut config, update);
@@ -1591,11 +1847,86 @@ mod tests {
             lang_a: config.lang_a.clone(),
             lang_b: config.lang_b.clone(),
             ui_lang: config.ui_lang.clone(),
+            appearance: None,
         };
 
         apply_config_update(&mut config, update);
 
         assert!(config.api_key.is_empty());
+    }
+
+    #[test]
+    fn appearance_defaults_for_old_configs_and_survives_reopening() {
+        let mut legacy = serde_json::to_value(Config::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("appearance");
+        let config: Config = serde_json::from_value(legacy).unwrap();
+        assert_eq!(config.appearance, Appearance::Default);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = Config {
+            appearance: Appearance::LiquidGlass,
+            ..config
+        };
+        write_config_to_path(&path, &config).unwrap();
+        let reloaded = read_config_from_path(&path).unwrap();
+        assert_eq!(reloaded.appearance, Appearance::LiquidGlass);
+        let view = serde_json::to_value(ConfigView::from(&reloaded)).unwrap();
+        assert_eq!(view["appearance"], "liquid_glass");
+        assert!(view.get("api_key").is_none());
+    }
+
+    #[test]
+    fn old_clients_preserve_appearance_and_explicit_updates_can_restore_default() {
+        let mut config = Config {
+            appearance: Appearance::LiquidGlass,
+            ..Config::default()
+        };
+        let mut update = json!({
+            "base_url": config.base_url, "api_key": null, "model": config.model,
+            "lang_a": "English", "lang_b": "Chinese", "ui_lang": "en"
+        });
+        apply_config_update(&mut config, serde_json::from_value(update.clone()).unwrap());
+        assert_eq!(config.appearance, Appearance::LiquidGlass);
+        update["appearance"] = json!("default");
+        apply_config_update(&mut config, serde_json::from_value(update.clone()).unwrap());
+        assert_eq!(config.appearance, Appearance::Default);
+        update["appearance"] = json!("unsupported");
+        assert!(serde_json::from_value::<ConfigUpdate>(update).is_err());
+    }
+
+    #[test]
+    fn default_clears_native_material_and_glass_includes_platform_fallbacks() {
+        use tauri::window::{Effect, EffectState};
+        assert!(appearance_effects(Appearance::Default).is_none());
+        let glass = appearance_effects(Appearance::LiquidGlass).unwrap();
+        assert_eq!(glass.effects, vec![Effect::Popover, Effect::Acrylic]);
+        assert_eq!(glass.state, Some(EffectState::Active));
+        assert_eq!(glass.radius, Some(14.0));
+    }
+
+    #[test]
+    fn native_layout_ignores_old_revisions_and_a_new_opening_starts_fresh() {
+        let mut state = NativeAppearanceState::default();
+        assert!(state.accept(1, 5));
+        assert!(!state.accept(1, 4));
+        assert_eq!(state.revision, 5);
+        assert!(state.accept(2, 1));
+        assert_eq!(state.generation, 2);
+        assert_eq!(state.revision, 1);
+    }
+
+    #[test]
+    fn appearance_selection_during_closing_is_used_for_the_next_opening() {
+        let mut native = NativeAppearanceState::default();
+        assert!(native.select(1, 1, Appearance::LiquidGlass));
+        native.applied = Some(Appearance::LiquidGlass);
+        // Closing can defer material changes, but must retain the user's choice.
+        assert!(native.select(1, 2, Appearance::Default));
+        assert_eq!(native.applied, Some(Appearance::LiquidGlass));
+        assert!(!native.select(1, 1, Appearance::LiquidGlass));
+        assert!(native.accept(2, 0));
+        assert_eq!(native.requested, Some(Appearance::Default));
     }
 
     #[test]

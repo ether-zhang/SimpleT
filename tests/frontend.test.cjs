@@ -40,6 +40,7 @@ async function createApp(config = {}, options = {}) {
       getAttribute(name) { return attributes.get(name); },
       removeAttribute(name) { attributes.delete(name); },
       dispatch(name, event = {}) {
+        event.target ??= this;
         event.preventDefault ??= function () { this.defaultPrevented = true; };
         return listeners.get(name)?.(event);
       },
@@ -62,7 +63,7 @@ async function createApp(config = {}, options = {}) {
     return elements.get(selector);
   }
 
-  for (const id of ["lang-a", "lang-b", "cfg-ui-lang"]) {
+  for (const id of ["lang-a", "lang-b", "cfg-ui-lang", "cfg-appearance"]) {
     element(`#${id}-picker`).appendChild(element(`#${id}`));
     element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
     element(`#${id}`).appendChild(element(`#${id}-label`));
@@ -88,6 +89,7 @@ async function createApp(config = {}, options = {}) {
           if (command === "load_history") return { entries: [], has_more: false, save_error: null };
           if (command === "frontend_ready") events.get("navigate")?.({ payload: {
             page: options.initialPage || "translate", origin: "bottom", generation: 1,
+            nativeReveal: options.nativeReveal || false,
           } });
           if (command === "request_hide") {
             events.get("flyout-hide")?.({ payload: { generation: args.generation } });
@@ -101,7 +103,7 @@ async function createApp(config = {}, options = {}) {
       },
     },
     document: {
-      querySelector: element, createElement: () => makeElement(), documentElement: {},
+      querySelector: element, createElement: () => makeElement(), documentElement: makeElement(),
       addEventListener(name, handler) { documentListeners.set(name, handler); },
     },
     requestAnimationFrame(handler) { const id = nextFrame++; frames.set(id, handler); return id; },
@@ -114,7 +116,7 @@ async function createApp(config = {}, options = {}) {
   vm.runInContext(source, context);
   await startup();
   return {
-    element, commands, requests, timers,
+    element, commands, requests, timers, root: context.document.documentElement,
     emit(name, payload) { events.get(name)?.({ payload }); },
     runTimer(id) { const handler = timers.get(id); timers.delete(id); return handler?.(); },
     flushFrames() {
@@ -668,6 +670,202 @@ test("settings language typeahead searches native names and page navigation dism
   assert.equal(app.element("#cfg-ui-lang-menu").hidden, false);
   app.documentEvent("pointerdown", { target: app.element("#cfg-model") });
   assert.equal(app.element("#cfg-ui-lang-menu").hidden, true);
+});
+
+for (const [stored, expected] of [[undefined, "default"], ["unknown", "default"], ["liquid_glass", "liquid_glass"]]) {
+  test(`appearance restores the saved choice with a safe default: ${stored}`, async () => {
+    const app = await createApp({ appearance: stored }, { initialPage: "settings" });
+    assert.equal(app.root.getAttribute("data-appearance"), expected);
+    assert.equal(app.element("#cfg-appearance").value, expected);
+    assert.equal(app.element("#cfg-appearance-menu").children.length, 2);
+    assert.equal(app.element("#cfg-appearance-label").textContent, expected === "default" ? "默认" : "液态玻璃");
+    assert.equal(app.commands.some(({ command }) => command === "save_appearance"), false);
+  });
+}
+
+test("appearance applies immediately and persists without saving credential drafts", async () => {
+  const gate = deferred();
+  const app = await createApp({}, { initialPage: "settings", invoke: { save_appearance: () => gate.promise } });
+  app.flushFrames();
+  app.flushFrames();
+  app.element("#cfg-key").value = "new key draft";
+  app.element("#cfg-key").dispatch("input");
+  app.element("#cfg-model").value = "new model draft";
+  app.element("#cfg-appearance").dispatch("click");
+  const saving = app.element("#cfg-appearance-menu").children[1].dispatch("click");
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  assert.equal(app.element("#cfg-appearance-menu").hidden, true);
+  await flushPromises();
+  assert.equal(app.commands.find(({ command }) => command === "save_appearance").args.appearance, "liquid_glass");
+  const native = app.commands.find(({ command }) => command === "set_window_appearance");
+  assert.equal(native.args.appearance, "liquid_glass");
+  assert.equal(native.args.generation, 1);
+  assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+  assert.equal(app.commands.some(({ command }) => command === "save_ui_lang"), false);
+  gate.resolve();
+  await saving;
+  assert.equal(app.element("#cfg-key").value, "new key draft");
+  assert.equal(app.element("#cfg-model").value, "new model draft");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.appearance, "liquid_glass");
+});
+
+test("appearance labels follow the UI locale and keyboard selection uses localized names", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { initialPage: "settings" });
+  app.element("#cfg-ui-lang").dispatch("click");
+  await app.element("#cfg-ui-lang-menu").children[1].dispatch("click");
+  assert.equal(app.element("#cfg-appearance-label").textContent, "Liquid Glass");
+  assert.equal(app.element("#lbl-appearance").textContent, "Appearance");
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  const picker = app.element("#cfg-appearance");
+  picker.dispatch("keydown", { key: "d" });
+  assert.match(picker.getAttribute("aria-activedescendant"), /-default$/);
+  await picker.dispatch("keydown", { key: "Enter" });
+  assert.equal(app.root.getAttribute("data-appearance"), "default");
+  assert.equal(app.element("#cfg-appearance-label").textContent, "Default");
+});
+
+test("rapid appearance changes keep write order and ignore an obsolete save error", async () => {
+  const gate = deferred();
+  let saves = 0;
+  const app = await createApp({}, { initialPage: "settings", invoke: {
+    save_appearance: async () => {
+      if (++saves === 1) { await gate.promise; throw new Error("old save failure"); }
+    },
+  } });
+  const picker = app.element("#cfg-appearance");
+  picker.value = "liquid_glass";
+  const first = picker.dispatch("change");
+  picker.value = "default";
+  const second = picker.dispatch("change");
+  await flushPromises();
+  assert.equal(app.root.getAttribute("data-appearance"), "default");
+  assert.equal(saves, 1);
+  gate.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(app.commands.filter(({ command }) => command === "save_appearance").map(call => call.args.appearance), ["liquid_glass", "default"]);
+  assert.equal(app.element("#cfg-status").textContent, "");
+});
+
+test("a failed appearance save preserves the preview and a full save can recover it", async () => {
+  const app = await createApp({}, { initialPage: "settings", invoke: {
+    save_appearance: async () => { throw new Error("disk full"); },
+  } });
+  app.element("#cfg-appearance").value = "liquid_glass";
+  await app.element("#cfg-appearance").dispatch("change");
+  assert.match(app.element("#cfg-status").textContent, /外观设置失败.*disk full/);
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.appearance, "liquid_glass");
+  assert.match(app.element("#cfg-status").textContent, /已保存/);
+});
+
+test("prepared native glass reveals once, without changing material after an animation or dropdown", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { platform: "MacIntel", nativeReveal: true });
+  const card = app.element(".card");
+  assert.equal(app.root.getAttribute("data-native-reveal"), "true");
+  assert.equal(app.root.getAttribute("data-native-backdrop"), "true");
+  assert.equal(app.commands.some(({ command }) => command === "reveal_flyout"), false);
+  app.flushFrames();
+  assert.equal(app.commands.some(({ command }) => command === "reveal_flyout"), false);
+  app.flushFrames();
+  card.dispatch("transitionend", { propertyName: "opacity" });
+  card.dispatch("transitionend", { propertyName: "clip-path" });
+  app.element("#lang-a").dispatch("click");
+  app.keydown({ key: "Escape" });
+  assert.deepEqual(app.commands.filter(({ command }) => command === "reveal_flyout").map(call => call.args.generation), [1]);
+  assert.equal(app.commands.some(({ command }) => command === "set_window_appearance"), false);
+  await app.element("#close-flyout").dispatch("click");
+  card.dispatch("transitionend", { propertyName: "clip-path" });
+  app.emit("navigate", { page: "settings", generation: 2, origin: "top", nativeReveal: true });
+  app.flushFrames();
+  app.flushFrames();
+  card.dispatch("transitionend", { propertyName: "clip-path" });
+  assert.deepEqual(app.commands.filter(({ command }) => command === "reveal_flyout").map(call => call.args.generation), [1, 2]);
+  assert.equal(app.commands.some(({ command }) => command === "set_window_appearance"), false);
+  assert.equal(app.root.getAttribute("data-native-glass"), undefined);
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+});
+
+test("closing before the opening frames cancels native reveal, and a non-native reopen uses CSS", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { nativeReveal: true });
+  app.flushFrames();
+  await app.element("#close-flyout").dispatch("click");
+  app.flushFrames();
+  assert.equal(app.commands.some(({ command }) => command === "reveal_flyout"), false);
+  app.emit("navigate", { page: "translate", generation: 2, origin: "top", nativeReveal: false });
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.root.getAttribute("data-native-reveal"), "false");
+  assert.equal(app.element(".card").classList.contains("show"), true);
+  assert.equal(app.commands.some(({ command }) => command === "reveal_flyout"), false);
+});
+
+test("a prepared mask is released even if Default was chosen while navigation was pending", async () => {
+  const app = await createApp({}, { nativeReveal: true });
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.root.getAttribute("data-appearance"), "default");
+  assert.deepEqual(app.commands.filter(({ command }) => command === "reveal_flyout").map(call => call.args.generation), [1]);
+});
+
+test("choosing Default before the opening frames still releases the prepared native mask", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { initialPage: "settings", nativeReveal: true });
+  const picker = app.element("#cfg-appearance");
+  picker.value = "default";
+  await picker.dispatch("change");
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.root.getAttribute("data-appearance"), "default");
+  assert.deepEqual(app.commands.filter(({ command }) => command === "reveal_flyout").map(call => call.args.generation), [1]);
+});
+
+test("an explicit native appearance change keeps HTML fills and does not replay the opening animation", async () => {
+  const nativeReady = deferred();
+  const app = await createApp({}, { initialPage: "settings", invoke: {
+    set_window_appearance: () => nativeReady.promise,
+  } });
+  app.flushFrames();
+  app.flushFrames();
+  const picker = app.element("#cfg-appearance");
+  picker.value = "liquid_glass";
+  const change = picker.dispatch("change");
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  nativeReady.resolve(true);
+  await change;
+  assert.equal(app.root.getAttribute("data-native-reveal"), "true");
+  // Native masking never replaces the shared control fills or shadows.
+  assert.equal(app.root.getAttribute("data-native-glass"), undefined);
+  assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  assert.equal(app.commands.some(({ command }) => command === "reveal_flyout"), false);
+});
+
+test("a delayed native glass response cannot restore glass after choosing Default or closing", async () => {
+  const pending = [];
+  const app = await createApp({}, { initialPage: "settings", invoke: {
+    set_window_appearance: async ({ appearance }) => {
+      if (appearance === "default") return false;
+      const gate = deferred();
+      pending.push(gate);
+      return gate.promise;
+    },
+  } });
+  app.flushFrames();
+  app.flushFrames();
+  const picker = app.element("#cfg-appearance");
+  picker.value = "liquid_glass";
+  const first = picker.dispatch("change");
+  picker.value = "default";
+  await picker.dispatch("change");
+  pending[0].resolve(true);
+  await first;
+  assert.equal(app.root.getAttribute("data-native-reveal"), "false");
+  picker.value = "liquid_glass";
+  const second = picker.dispatch("change");
+  await app.element("#close-flyout").dispatch("click");
+  pending[1].resolve(true);
+  await second;
+  assert.equal(app.root.getAttribute("data-native-reveal"), "false");
 });
 
 test("open language lists close when navigating to settings or hiding the flyout", async () => {

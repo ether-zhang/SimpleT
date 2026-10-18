@@ -1,0 +1,199 @@
+// A single content-view mask reveals the native frost and WebView together.
+// The material stays installed between openings; no compositor changes at rest.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq)]
+struct ClipRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn clip_rect(width: f64, height: f64, flipped: bool, visible: bool) -> ClipRect {
+    ClipRect {
+        x: 6.0,
+        y: if visible || flipped {
+            6.0
+        } else {
+            height - 6.0
+        },
+        width: (width - 12.0).max(0.0),
+        height: if visible {
+            (height - 12.0).max(0.0)
+        } else {
+            0.0
+        },
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2::{rc::Retained, ClassType};
+    use objc2_app_kit::{NSView, NSVisualEffectView};
+    use objc2_core_graphics::CGColor;
+    use objc2_foundation::{
+        ns_string, MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSValue,
+    };
+    use objc2_quartz_core::{
+        CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction,
+    };
+
+    fn content_view(window: &tauri::WebviewWindow) -> Result<&NSView, String> {
+        MainThreadMarker::new().ok_or("磨砂材质必须在主线程更新")?;
+        let pointer = window.ns_view().map_err(|error| error.to_string())?;
+        // Tauri owns this view. All callers borrow it only on the main thread.
+        unsafe { (pointer as *const NSView).as_ref() }.ok_or("窗口视图不可用".into())
+    }
+
+    pub fn set_appearance(window: &tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
+        use window_vibrancy::{
+            apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+        };
+        let root = content_view(window)?;
+        // Unlike Window::set_effects, these calls finish synchronously on the UI
+        // thread, so material installation is complete before the panel shows.
+        clear_vibrancy(window).map_err(|error| error.to_string())?;
+        if !enabled {
+            if let Some(layer) = root.layer() {
+                // The independent mask has no reference back to the content layer.
+                unsafe { layer.setMask(None) };
+            }
+            return Ok(());
+        }
+        apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::Popover,
+            Some(NSVisualEffectState::Active),
+            Some(14.0),
+        )
+        .map_err(|error| error.to_string())?;
+        let bounds = root.bounds();
+        let mut found = false;
+        for view in root.subviews() {
+            if view.isKindOfClass(NSVisualEffectView::class()) {
+                view.setFrame(NSRect::new(
+                    NSPoint::new(bounds.origin.x + 6.0, bounds.origin.y + 6.0),
+                    NSSize::new(bounds.size.width - 12.0, bounds.size.height - 12.0),
+                ));
+                // Never lower view alpha: it leaks sharp desktop pixels into blur.
+                view.setAlphaValue(1.0);
+                found = true;
+            }
+        }
+        if !found {
+            return Err("窗口磨砂材质不可用".into());
+        }
+        // Switching appearance in an already-visible panel must keep it visible.
+        set_reveal(window, true, false)
+    }
+
+    fn animation(
+        key: &objc2_foundation::NSString,
+        from: &objc2::runtime::AnyObject,
+        to: &objc2::runtime::AnyObject,
+    ) -> Retained<CABasicAnimation> {
+        let animation = CABasicAnimation::animationWithKeyPath(Some(key));
+        // Values are NSValue boxes matching the selected bounds/position property.
+        unsafe {
+            animation.setFromValue(Some(from));
+            animation.setToValue(Some(to));
+        }
+        animation.setDuration(0.28);
+        animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
+            0.22, 1.0, 0.36, 1.0,
+        )));
+        animation
+    }
+
+    pub fn set_reveal(
+        window: &tauri::WebviewWindow,
+        visible: bool,
+        animated: bool,
+    ) -> Result<(), String> {
+        let root = content_view(window)?;
+        root.setWantsLayer(true);
+        let layer = root.layer().ok_or("窗口裁切图层不可用")?;
+        let mask = layer.mask().unwrap_or_else(|| {
+            let mask = CALayer::layer();
+            mask.setAnchorPoint(NSPoint::new(0.0, 0.0));
+            mask.setBackgroundColor(Some(&CGColor::new_srgb(0.0, 0.0, 0.0, 1.0)));
+            // A mask cannot have a superlayer or reference the layer it masks.
+            unsafe { layer.setMask(Some(&mask)) };
+            mask
+        });
+        let bounds = root.bounds();
+        let rect = super::clip_rect(
+            bounds.size.width,
+            bounds.size.height,
+            layer.isGeometryFlipped(),
+            visible,
+        );
+        let target_bounds =
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(rect.width, rect.height));
+        let target_position = NSPoint::new(rect.x, rect.y);
+        // Read the current presentation geometry before replacing an interrupted
+        // animation. Model values already equal the final state when it completes.
+        let presentation = if animated {
+            unsafe { mask.presentationLayer() }
+        } else {
+            None
+        };
+        let from = presentation.as_deref().unwrap_or(&mask);
+        let from_bounds = from.bounds();
+        let from_position = from.position();
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        mask.removeAllAnimations();
+        mask.setBounds(target_bounds);
+        mask.setPosition(target_position);
+        if animated {
+            // These boxes contain the Core Animation bounds and position types.
+            let (from_bounds, to_bounds, from_position, to_position) = unsafe {
+                (
+                    NSValue::valueWithRect(from_bounds),
+                    NSValue::valueWithRect(target_bounds),
+                    NSValue::valueWithPoint(from_position),
+                    NSValue::valueWithPoint(target_position),
+                )
+            };
+            mask.addAnimation_forKey(
+                &animation(ns_string!("bounds"), &from_bounds, &to_bounds),
+                Some(ns_string!("revealBounds")),
+            );
+            mask.addAnimation_forKey(
+                &animation(ns_string!("position"), &from_position, &to_position),
+                Some(ns_string!("revealPosition")),
+            );
+        }
+        CATransaction::commit();
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use macos::{set_appearance, set_reveal};
+
+#[cfg(test)]
+mod tests {
+    use super::clip_rect;
+
+    #[test]
+    fn expanded_mask_matches_the_card_on_both_coordinate_systems() {
+        for flipped in [false, true] {
+            let rect = clip_rect(756.0, 483.0, flipped, true);
+            assert_eq!(
+                (rect.x, rect.y, rect.width, rect.height),
+                (6.0, 6.0, 744.0, 471.0)
+            );
+        }
+    }
+
+    #[test]
+    fn collapsed_mask_starts_at_the_menu_bar_edge() {
+        let normal = clip_rect(756.0, 483.0, false, false);
+        let flipped = clip_rect(756.0, 483.0, true, false);
+        assert_eq!((normal.y, normal.height), (477.0, 0.0));
+        assert_eq!((flipped.y, flipped.height), (6.0, 0.0));
+    }
+}
