@@ -14,10 +14,18 @@
     <!-- 翻译页 -->
     <main id="page-translate" class="page">
       <div class="langbar">
-        <select id="lang-a" class="lang-select"></select>
+        <div id="lang-a-picker" class="language-picker">
+          <button id="lang-a" class="lang-select" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="lang-a-menu" value="Chinese">
+            <span id="lang-a-label" class="language-label"></span>
+          </button>
+          <div id="lang-a-menu" class="language-menu" role="listbox" hidden></div>
+        </div>
         <button id="swap" class="swap" title="交换语言">⇄</button>
-        <div class="target-language">
-          <select id="lang-b" class="lang-select"></select>
+        <div id="lang-b-picker" class="language-picker">
+          <button id="lang-b" class="lang-select" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="lang-b-menu" value="English">
+            <span id="lang-b-label" class="language-label"></span>
+          </button>
+          <div id="lang-b-menu" class="language-menu" role="listbox" hidden></div>
         </div>
       </div>
 

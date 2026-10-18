@@ -125,11 +125,16 @@ body {
   align-items: center;
 }
 
-.target-language {
+.language-picker {
+  position: relative;
   min-width: 0;
 }
 
 .lang-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   min-width: 0;
   height: 36px;
@@ -139,8 +144,86 @@ body {
   background: var(--card);
   color: var(--fg);
   font-size: 14px;
+  font-weight: 400;
+  text-align: left;
+  appearance: none;
   outline: none;
   cursor: pointer;
+}
+.lang-select::after {
+  content: "";
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin: -3px 2px 0 0;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+}
+.lang-select[aria-expanded="true"]::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+.lang-select:hover,
+.lang-select[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.lang-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.language-label,
+.language-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.language-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  max-height: calc(100vh - 88px);
+  padding: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  font-size: 14px;
+}
+.language-option {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 4px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.language-check {
+  width: 8px;
+  height: 5px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(-45deg);
+  visibility: hidden;
+}
+.language-option[aria-selected="true"] .language-check {
+  visibility: visible;
+}
+.language-option[aria-selected="true"] {
+  font-weight: 500;
+}
+.language-option.is-active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .swap {

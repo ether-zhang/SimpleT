@@ -24,6 +24,8 @@ const LANGUAGES = [
 const I18N = {
   zh: {
     _name: "中文",
+    sourceLanguage: "源语言",
+    targetLanguage: "目标语言",
     swapTitle: "交换语言",
     inputPh: "输入要翻译的内容…",
     outputPh: "翻译结果",
@@ -44,6 +46,8 @@ const I18N = {
   },
   en: {
     _name: "English",
+    sourceLanguage: "Source language",
+    targetLanguage: "Target language",
     swapTitle: "Swap languages",
     inputPh: "Enter text to translate…",
     outputPh: "Translation",
@@ -64,6 +68,8 @@ const I18N = {
   },
   ja: {
     _name: "日本語",
+    sourceLanguage: "翻訳元の言語",
+    targetLanguage: "翻訳先の言語",
     swapTitle: "言語を入れ替え",
     inputPh: "翻訳する内容を入力…",
     outputPh: "翻訳結果",
@@ -84,6 +90,8 @@ const I18N = {
   },
   ko: {
     _name: "한국어",
+    sourceLanguage: "원본 언어",
+    targetLanguage: "대상 언어",
     swapTitle: "언어 교환",
     inputPh: "번역할 내용을 입력…",
     outputPh: "번역 결과",
@@ -104,6 +112,8 @@ const I18N = {
   },
   fr: {
     _name: "Français",
+    sourceLanguage: "Langue source",
+    targetLanguage: "Langue cible",
     swapTitle: "Inverser les langues",
     inputPh: "Saisir le texte à traduire…",
     outputPh: "Traduction",
@@ -124,6 +134,8 @@ const I18N = {
   },
   de: {
     _name: "Deutsch",
+    sourceLanguage: "Ausgangssprache",
+    targetLanguage: "Zielsprache",
     swapTitle: "Sprachen tauschen",
     inputPh: "Zu übersetzenden Text eingeben…",
     outputPh: "Übersetzung",
@@ -144,6 +156,8 @@ const I18N = {
   },
   es: {
     _name: "Español",
+    sourceLanguage: "Idioma de origen",
+    targetLanguage: "Idioma de destino",
     swapTitle: "Intercambiar idiomas",
     inputPh: "Escribe el texto a traducir…",
     outputPh: "Traducción",
@@ -164,6 +178,8 @@ const I18N = {
   },
   ru: {
     _name: "Русский",
+    sourceLanguage: "Исходный язык",
+    targetLanguage: "Язык перевода",
     swapTitle: "Поменять языки",
     inputPh: "Введите текст для перевода…",
     outputPh: "Перевод",
@@ -186,6 +202,8 @@ const I18N = {
 
 let currentLang = "zh";
 let els = {};
+let languagePickers = [];
+let openLanguagePicker = null;
 
 function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
@@ -216,9 +234,9 @@ function applyLocale(lang) {
   els.lblUiLang.textContent = t("uiLangLabel");
   els.cfgSave.textContent = t("save");
   els.cfgBack.textContent = t("back");
-  // A(B) 中的 A 随界面语言变化，需重建两个语种下拉（保留已选值）
-  fillLangSelect(els.langA);
-  fillLangSelect(els.langB);
+  // A(B) 中的 A 随界面语言变化，重建两个语种列表并保留已选值。
+  closeLanguagePicker();
+  languagePickers.forEach(renderLanguagePicker);
 }
 
 // 某语言在指定区域设置下的显示名（失败则回退到代码本身）
@@ -237,16 +255,143 @@ function langLabel(code) {
   return a === b ? a : `${a} (${b})`;
 }
 
-function fillLangSelect(sel) {
-  const prev = sel.value;
-  sel.innerHTML = "";
-  for (const l of LANGUAGES) {
-    const o = document.createElement("option");
-    o.value = l.value;
-    o.textContent = langLabel(l.code);
-    sel.appendChild(o);
+function syncLanguagePicker(picker) {
+  const selected = LANGUAGES.findIndex((lang) => lang.value === picker.trigger.value);
+  picker.label.textContent = langLabel(LANGUAGES[selected].code);
+  picker.trigger.setAttribute("aria-label", `${t(picker.labelKey)}: ${picker.label.textContent}`);
+  picker.menu.setAttribute("aria-label", t(picker.labelKey));
+  picker.options.forEach((option, index) => {
+    option.setAttribute("aria-selected", String(index === selected));
+  });
+}
+
+function renderLanguagePicker(picker) {
+  if (!LANGUAGES.some((lang) => lang.value === picker.trigger.value)) {
+    picker.trigger.value = picker.defaultValue;
   }
-  if (prev) sel.value = prev;
+  picker.options = LANGUAGES.map((lang, index) => {
+    const option = document.createElement("div");
+    option.id = `${picker.trigger.id}-option-${lang.code}`;
+    option.className = "language-option";
+    option.setAttribute("role", "option");
+    const check = document.createElement("span");
+    check.className = "language-check";
+    check.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = langLabel(lang.code);
+    option.appendChild(check);
+    option.appendChild(label);
+    option.addEventListener("pointermove", () => activateLanguageOption(picker, index, false));
+    option.addEventListener("click", () => chooseLanguage(picker, index));
+    return option;
+  });
+  picker.menu.replaceChildren(...picker.options);
+  syncLanguagePicker(picker);
+}
+
+function activateLanguageOption(picker, index, scroll = true) {
+  picker.activeIndex = index;
+  picker.options.forEach((option, i) => option.classList.toggle("is-active", i === index));
+  const option = picker.options[index];
+  picker.trigger.setAttribute("aria-activedescendant", option.id);
+  if (!scroll) return;
+  // Scroll only the list, so keyboard navigation cannot move the flyout itself.
+  const top = option.offsetTop;
+  const bottom = top + option.offsetHeight;
+  if (top < picker.menu.scrollTop) picker.menu.scrollTop = top;
+  else if (bottom > picker.menu.scrollTop + picker.menu.clientHeight) {
+    picker.menu.scrollTop = bottom - picker.menu.clientHeight;
+  }
+}
+
+function closeLanguagePicker(restoreFocus = false) {
+  if (!openLanguagePicker) return false;
+  const picker = openLanguagePicker;
+  openLanguagePicker = null;
+  picker.menu.hidden = true;
+  picker.trigger.setAttribute("aria-expanded", "false");
+  picker.trigger.removeAttribute("aria-activedescendant");
+  if (restoreFocus) picker.trigger.focus();
+  return true;
+}
+
+function showLanguagePicker(picker, index) {
+  closeLanguagePicker();
+  openLanguagePicker = picker;
+  picker.search = "";
+  picker.searchTime = 0;
+  picker.menu.hidden = false;
+  picker.trigger.setAttribute("aria-expanded", "true");
+  picker.trigger.focus();
+  activateLanguageOption(picker, index ?? LANGUAGES.findIndex((lang) => lang.value === picker.trigger.value));
+}
+
+function chooseLanguage(picker, index) {
+  const value = LANGUAGES[index].value;
+  const changed = picker.trigger.value !== value;
+  picker.trigger.value = value;
+  syncLanguagePicker(picker);
+  closeLanguagePicker(true);
+  if (changed) return persistLangs();
+}
+
+function onLanguageKeydown(picker, event) {
+  if (event.isComposing || event.keyCode === 229) return;
+  const expanded = openLanguagePicker === picker;
+  if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    if (!expanded) {
+      showLanguagePicker(picker, event.key === "Home" ? 0 : event.key === "End" ? LANGUAGES.length - 1 : undefined);
+    } else if (event.key === "Enter" || event.key === " ") {
+      return chooseLanguage(picker, picker.activeIndex);
+    } else {
+      const index = event.key === "Home" ? 0 : event.key === "End" ? LANGUAGES.length - 1
+        : Math.max(0, Math.min(LANGUAGES.length - 1, picker.activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
+      activateLanguageOption(picker, index);
+    }
+  } else if (event.key === "Tab") {
+    closeLanguagePicker();
+  } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    if (!expanded) showLanguagePicker(picker);
+    const now = Date.now();
+    const key = event.key.toLocaleLowerCase(currentLang);
+    picker.search = (now - picker.searchTime < 700 ? picker.search : "") + key;
+    picker.searchTime = now;
+    const find = (query) => {
+      for (let step = 1; step <= LANGUAGES.length; step++) {
+        const index = (picker.activeIndex + step) % LANGUAGES.length;
+        const lang = LANGUAGES[index];
+        if ([langLabel(lang.code), displayName(lang.code, lang.code), lang.value]
+          .some((label) => label.toLocaleLowerCase(currentLang).startsWith(query))) return index;
+      }
+      return -1;
+    };
+    let index = find(picker.search);
+    if (index < 0) {
+      picker.search = key;
+      index = find(key);
+    }
+    if (index >= 0) activateLanguageOption(picker, index);
+  }
+}
+
+function createLanguagePicker(id, labelKey, defaultValue) {
+  const picker = {
+    root: document.querySelector(`#${id}-picker`),
+    trigger: document.querySelector(`#${id}`),
+    label: document.querySelector(`#${id}-label`),
+    menu: document.querySelector(`#${id}-menu`),
+    labelKey, defaultValue, options: [], activeIndex: 0, search: "", searchTime: 0,
+  };
+  picker.menu.hidden = true;
+  picker.trigger.setAttribute("aria-expanded", "false");
+  picker.trigger.addEventListener("click", () => {
+    if (openLanguagePicker === picker) closeLanguagePicker();
+    else showLanguagePicker(picker);
+  });
+  picker.trigger.addEventListener("keydown", (event) => onLanguageKeydown(picker, event));
+  return picker;
 }
 
 // UI 语言下拉：每项用该语言的母语名显示
@@ -360,6 +505,7 @@ function slideIn(origin) {
 // 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
 function slideOutThenHide(generation) {
   if (generation !== flyoutGeneration || hideTimer !== null) return;
+  closeLanguagePicker();
   closeRequested = true;
   cancelPageFocus();
   cancelSlideInFrames();
@@ -373,6 +519,7 @@ function slideOutThenHide(generation) {
 }
 
 function showPage(page) {
+  closeLanguagePicker();
   const isSettings = page === "settings";
   currentPage = isSettings ? "settings" : "translate";
   els.pageTranslate.classList.toggle("hidden", isSettings);
@@ -529,8 +676,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   els.translateBtn.setAttribute("aria-keyshortcuts", isMac ? "Meta+Enter" : "Control+Enter");
-  fillLangSelect(els.langA);
-  fillLangSelect(els.langB);
+  languagePickers = [
+    createLanguagePicker("lang-a", "sourceLanguage", "Chinese"),
+    createLanguagePicker("lang-b", "targetLanguage", "English"),
+  ];
   fillUiLangSelect(els.cfgUiLang);
   els.langA.value = "Chinese";
   els.langB.value = "English";
@@ -573,18 +722,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   els.swap.addEventListener("click", async () => {
+    closeLanguagePicker();
     const a = els.langA.value;
     els.langA.value = els.langB.value;
     els.langB.value = a;
+    languagePickers.forEach(syncLanguagePicker);
     // 同时交换输入/输出，方便反向确认
     const t = els.input.value;
     els.input.value = els.output.value;
     els.output.value = t;
     await persistLangs();
   });
-
-  els.langA.addEventListener("change", persistLangs);
-  els.langB.addEventListener("change", persistLangs);
 
   els.openSettings.addEventListener("click", () => showPage("settings"));
   els.cfgSave.addEventListener("click", saveConfig);
@@ -596,10 +744,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     await persistUiLang();
   });
 
-  // Esc 收起浮窗（带下滑动画）
+  // Close an open list before handling the flyout's Escape shortcut.
+  document.addEventListener("pointerdown", (event) => {
+    if (openLanguagePicker && !openLanguagePicker.root.contains(event.target)) closeLanguagePicker();
+  });
+  document.addEventListener("focusin", (event) => {
+    if (openLanguagePicker && !openLanguagePicker.root.contains(event.target)) closeLanguagePicker();
+  });
+  window.addEventListener("blur", () => closeLanguagePicker());
   document.addEventListener("keydown", (e) => {
-    if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === "Escape") requestClose();
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      if (closeLanguagePicker(true)) e.preventDefault();
+      else requestClose();
+    }
   });
 
   try {

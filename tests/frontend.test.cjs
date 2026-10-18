@@ -11,6 +11,7 @@ const source = readFileSync(resolve(__dirname, "../src/main.js"), "utf8");
 async function createApp(config = {}, options = {}) {
   const elements = new Map();
   const documentListeners = new Map();
+  const windowListeners = new Map();
   const commands = [];
   const requests = [];
   const timers = new Map();
@@ -20,27 +21,50 @@ async function createApp(config = {}, options = {}) {
   let nextTimer = 1;
   let nextFrame = 1;
 
+  function makeElement(selector = "") {
+    const classes = new Set();
+    const listeners = new Map();
+    const attributes = new Map();
+    return {
+      id: selector.startsWith("#") ? selector.slice(1) : "",
+      children: [], hidden: false, scrollTop: 0, clientHeight: 400, offsetTop: 0,
+      value: "", textContent: "", disabled: false,
+      classList: {
+        add(...names) { names.forEach((name) => classes.add(name)); },
+        remove(...names) { names.forEach((name) => classes.delete(name)); },
+        toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); },
+        contains(name) { return classes.has(name); },
+      },
+      addEventListener(name, handler) { listeners.set(name, handler); },
+      setAttribute(name, value) { attributes.set(name, value); },
+      getAttribute(name) { return attributes.get(name); },
+      removeAttribute(name) { attributes.delete(name); },
+      dispatch(name, event = {}) {
+        event.preventDefault ??= function () { this.defaultPrevented = true; };
+        return listeners.get(name)?.(event);
+      },
+      appendChild(child) { this.children.push(child); child.parentElement = this; },
+      replaceChildren(...children) {
+        this.children = [];
+        children.forEach((child) => this.appendChild(child));
+      },
+      contains(target) {
+        for (let node = target; node; node = node.parentElement) if (node === this) return true;
+        return false;
+      },
+      focus() { this.focused = true; }, offsetHeight: 28,
+    };
+  }
+
   function element(selector) {
-    if (!elements.has(selector)) {
-      const classes = new Set();
-      const listeners = new Map();
-      const attributes = new Map();
-      elements.set(selector, {
-        value: "", textContent: "", disabled: false,
-        classList: {
-          add(...names) { names.forEach((name) => classes.add(name)); },
-          remove(...names) { names.forEach((name) => classes.delete(name)); },
-          toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); },
-          contains(name) { return classes.has(name); },
-        },
-        addEventListener(name, handler) { listeners.set(name, handler); },
-        setAttribute(name, value) { attributes.set(name, value); },
-        getAttribute(name) { return attributes.get(name); },
-        dispatch(name, event = {}) { return listeners.get(name)?.(event); },
-        appendChild() {}, focus() { this.focused = true; }, offsetHeight: 0,
-      });
-    }
+    if (!elements.has(selector)) elements.set(selector, makeElement(selector));
     return elements.get(selector);
+  }
+
+  for (const id of ["lang-a", "lang-b"]) {
+    element(`#${id}-picker`).appendChild(element(`#${id}`));
+    element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
+    element(`#${id}`).appendChild(element(`#${id}-label`));
   }
 
   const context = {
@@ -69,10 +93,13 @@ async function createApp(config = {}, options = {}) {
         } },
         event: { listen: async (name, handler) => { events.set(name, handler); return () => {}; } },
       },
-      addEventListener(name, handler) { if (name === "DOMContentLoaded") startup = handler; },
+      addEventListener(name, handler) {
+        if (name === "DOMContentLoaded") startup = handler;
+        else windowListeners.set(name, handler);
+      },
     },
     document: {
-      querySelector: element, createElement: () => ({}), documentElement: {},
+      querySelector: element, createElement: () => makeElement(), documentElement: {},
       addEventListener(name, handler) { documentListeners.set(name, handler); },
     },
     requestAnimationFrame(handler) { const id = nextFrame++; frames.set(id, handler); return id; },
@@ -93,7 +120,12 @@ async function createApp(config = {}, options = {}) {
       frames.clear();
       pending.forEach((handler) => handler());
     },
-    keydown(event) { documentListeners.get("keydown")(event); },
+    documentEvent(name, event) { return documentListeners.get(name)?.(event); },
+    windowEvent(name) { return windowListeners.get(name)?.(); },
+    keydown(event) {
+      event.preventDefault ??= function () { this.defaultPrevented = true; };
+      documentListeners.get("keydown")(event);
+    },
     translate() { return element("#translate-btn").dispatch("click"); },
   };
 }
@@ -156,6 +188,96 @@ test("changing the UI language updates an in-flight hint and restores the shortc
   app.requests[0].resolve("你好");
   await pending;
   assert.equal(app.element("#translate-hint").textContent, "⌘ + ↵");
+});
+
+test("only one language list opens and outside clicks dismiss it without changing the selection", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("click");
+  assert.equal(app.element("#lang-a-menu").hidden, false);
+  assert.equal(app.element("#lang-a-menu").children.length, 13);
+  assert.equal(app.element("#lang-a-menu").children[1].getAttribute("aria-selected"), "true");
+  app.element("#lang-b").dispatch("click");
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  assert.equal(app.element("#lang-b-menu").hidden, false);
+  app.documentEvent("pointerdown", { target: app.element("#input") });
+  assert.equal(app.element("#lang-b-menu").hidden, true);
+  app.element("#lang-a").dispatch("click");
+  app.windowEvent("blur");
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  assert.equal(app.element("#lang-a").value, "English");
+  assert.equal(app.commands.some(({ command }) => command === "save_languages"), false);
+});
+
+test("Escape cancels a highlighted language before it can close the flyout", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("keydown", { key: "ArrowDown" });
+  app.element("#lang-a").dispatch("keydown", { key: "ArrowDown" });
+  assert.match(app.element("#lang-a").getAttribute("aria-activedescendant"), /-ja$/);
+  assert.equal(app.element("#lang-a").value, "English");
+  app.keydown({ key: "Escape" });
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  assert.equal(app.element("#lang-a").getAttribute("aria-expanded"), "false");
+  assert.equal(app.timers.size, 0);
+  assert.equal(app.commands.some(({ command }) => command === "save_languages"), false);
+  app.keydown({ key: "Escape" });
+  assert.equal(app.timers.size, 1);
+});
+
+test("keyboard selection persists the language and translation uses the chosen value", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("keydown", { key: "End" });
+  await app.element("#lang-a").dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#lang-a").value, "Vietnamese");
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  const saved = app.commands.find(({ command }) => command === "save_languages");
+  assert.equal(saved.args.langA, "Vietnamese");
+  assert.equal(saved.args.langB, "Chinese");
+  app.element("#input").value = "xin chào";
+  const pending = app.translate();
+  assert.equal(app.requests[0].args.langA, "Vietnamese");
+  app.requests[0].resolve("你好");
+  await pending;
+});
+
+test("language typeahead works with localized names and Tab leaves the current value intact", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("keydown", { key: "j", isComposing: true });
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  app.element("#lang-a").dispatch("keydown", { key: "j" });
+  assert.match(app.element("#lang-a").getAttribute("aria-activedescendant"), /-ja$/);
+  app.element("#lang-a").dispatch("keydown", { key: "Tab" });
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  assert.equal(app.element("#lang-a").value, "English");
+  app.element("#lang-a").dispatch("keydown", { key: "j" });
+  await app.element("#lang-a").dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#lang-a").value, "Japanese");
+});
+
+test("language labels and checkmarks follow swapping and UI locale changes", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("click");
+  await app.element("#lang-a-menu").children[4].dispatch("click");
+  await app.element("#swap").dispatch("click");
+  assert.equal(app.element("#lang-a").value, "Chinese");
+  assert.equal(app.element("#lang-b").value, "French");
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.match(app.element("#lang-a-label").textContent, /^Chinese/);
+  assert.match(app.element("#lang-b-label").textContent, /^French/);
+  assert.equal(app.element("#lang-a-menu").children[0].getAttribute("aria-selected"), "true");
+  assert.equal(app.element("#lang-b-menu").children[4].getAttribute("aria-selected"), "true");
+  assert.match(app.element("#lang-a").getAttribute("aria-label"), /^Source language:/);
+});
+
+test("open language lists close when navigating to settings or hiding the flyout", async () => {
+  const app = await createApp();
+  app.element("#lang-a").dispatch("click");
+  app.element("#open-settings").dispatch("click");
+  assert.equal(app.element("#lang-a-menu").hidden, true);
+  app.element("#cfg-back").dispatch("click");
+  app.element("#lang-b").dispatch("click");
+  app.emit("flyout-hide", { generation: 1 });
+  assert.equal(app.element("#lang-b-menu").hidden, true);
 });
 
 test("swapping while a request is pending preserves the swapped content", async () => {
@@ -385,7 +507,8 @@ test("a slow settings save cannot be submitted twice", async () => {
 test("configuration writes keep their order across autosave and full saves", async () => {
   const gate = deferred();
   const app = await createApp({}, { invoke: { save_languages: () => gate.promise } });
-  const autosave = app.element("#lang-a").dispatch("change");
+  app.element("#lang-a").dispatch("click");
+  const autosave = app.element("#lang-a-menu").children[2].dispatch("click");
   const fullSave = app.element("#cfg-save").dispatch("click");
   await flushPromises();
   const fullSaveStartedEarly = app.commands.some(({ command }) => command === "save_config");
