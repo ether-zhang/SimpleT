@@ -218,6 +218,7 @@ impl AppState {
 struct NativeAppearanceState {
     generation: u32,
     revision: u32,
+    layout_revision: u32,
     requested: Option<Appearance>,
     applied: Option<Appearance>,
 }
@@ -226,6 +227,9 @@ impl NativeAppearanceState {
     fn accept(&mut self, generation: u32, revision: u32) -> bool {
         if self.generation == generation && revision < self.revision {
             return false;
+        }
+        if self.generation != generation {
+            self.layout_revision = 0;
         }
         self.generation = generation;
         self.revision = revision;
@@ -237,6 +241,14 @@ impl NativeAppearanceState {
             return false;
         }
         self.requested = Some(appearance);
+        true
+    }
+
+    fn accept_layout(&mut self, generation: u32, revision: u32) -> bool {
+        if self.generation != generation || revision < self.layout_revision {
+            return false;
+        }
+        self.layout_revision = revision;
         true
     }
 }
@@ -582,6 +594,8 @@ async fn set_window_appearance(
     appearance: Appearance,
     generation: u32,
     revision: u32,
+    layout_revision: u32,
+    surfaces: Vec<glass::Surface>,
 ) -> Result<bool, String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     let handle = app.clone();
@@ -606,7 +620,14 @@ async fn set_window_appearance(
                 return Ok(false);
             }
             let window = handle.get_webview_window("main").ok_or("窗口不可用")?;
-            apply_window_appearance(&window, &mut native, appearance)
+            let native_reveal = apply_window_appearance(&window, &mut native, appearance)?;
+            #[cfg(target_os = "macos")]
+            if native_reveal && native.accept_layout(generation, layout_revision) {
+                glass::update_surfaces(&window, &surfaces)?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (layout_revision, surfaces);
+            Ok(native_reveal)
         })();
         let _ = sender.try_send(result);
     })
@@ -618,7 +639,12 @@ async fn set_window_appearance(
 }
 
 #[tauri::command]
-async fn reveal_flyout(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
+async fn reveal_flyout(
+    app: tauri::AppHandle,
+    generation: u32,
+    layout_revision: u32,
+    surfaces: Vec<glass::Surface>,
+) -> Result<(), String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -631,27 +657,27 @@ async fn reveal_flyout(app: tauri::AppHandle, generation: u32) -> Result<(), Str
         let result;
         #[cfg(target_os = "macos")]
         {
-            result = if visible
-                && state
+            result = (|| {
+                let mut native = state
                     .native_appearance
                     .lock()
-                    .map(|state| {
-                        state.generation == generation
-                            && state.applied == Some(Appearance::LiquidGlass)
-                    })
-                    .unwrap_or(false)
-            {
-                handle
-                    .get_webview_window("main")
-                    .ok_or("窗口不可用".into())
-                    .and_then(|window| glass::set_reveal(&window, true, true))
-            } else {
-                Ok(())
-            };
+                    .map_err(|_| "外观状态不可用")?;
+                if !visible
+                    || native.generation != generation
+                    || native.applied != Some(Appearance::LiquidGlass)
+                {
+                    return Ok(());
+                }
+                let window = handle.get_webview_window("main").ok_or("窗口不可用")?;
+                if native.accept_layout(generation, layout_revision) {
+                    glass::update_surfaces(&window, &surfaces)?;
+                }
+                glass::set_reveal(&window, true, true)
+            })();
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = visible;
+            let _ = (visible, layout_revision, surfaces);
             result = Ok(());
         }
         let _ = sender.try_send(result);
@@ -661,6 +687,51 @@ async fn reveal_flyout(app: tauri::AppHandle, generation: u32) -> Result<(), Str
         .recv()
         .await
         .ok_or_else(|| "窗口展开已中断".to_string())?
+}
+
+#[tauri::command]
+async fn update_glass_surfaces(
+    app: tauri::AppHandle,
+    generation: u32,
+    revision: u32,
+    surfaces: Vec<glass::Surface>,
+) -> Result<(), String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        let result = (|| {
+            let state = handle.state::<AppState>();
+            let visible = state
+                .flyout
+                .lock()
+                .map(|state| state.visible && !state.closing && state.generation == generation)
+                .unwrap_or(false);
+            let mut native = state
+                .native_appearance
+                .lock()
+                .map_err(|_| "外观状态不可用")?;
+            if !visible
+                || native.applied != Some(Appearance::LiquidGlass)
+                || !native.accept_layout(generation, revision)
+            {
+                return Ok(());
+            }
+            let window = handle.get_webview_window("main").ok_or("窗口不可用")?;
+            glass::update_surfaces(&window, &surfaces)
+        })();
+        #[cfg(not(target_os = "macos"))]
+        let result = {
+            let _ = (handle, generation, revision, surfaces);
+            Ok(())
+        };
+        let _ = sender.try_send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or_else(|| "材质布局更新已中断".to_string())?
 }
 
 #[tauri::command]
@@ -1328,6 +1399,7 @@ pub fn run() {
             save_appearance,
             set_window_appearance,
             reveal_flyout,
+            update_glass_surfaces,
             save_languages,
             load_history,
             translate,
@@ -1927,6 +1999,19 @@ mod tests {
         assert!(!native.select(1, 1, Appearance::LiquidGlass));
         assert!(native.accept(2, 0));
         assert_eq!(native.requested, Some(Appearance::Default));
+    }
+
+    #[test]
+    fn stale_material_geometry_cannot_replace_a_newer_layout_or_opening() {
+        let mut native = NativeAppearanceState::default();
+        assert!(native.accept(1, 0));
+        assert!(native.accept_layout(1, 5));
+        assert!(!native.accept_layout(1, 4));
+        assert!(native.select(1, 1, Appearance::LiquidGlass));
+        assert!(!native.accept_layout(1, 4));
+        assert!(native.accept(2, 0));
+        assert!(!native.accept_layout(1, 6));
+        assert!(native.accept_layout(2, 1));
     }
 
     #[test]

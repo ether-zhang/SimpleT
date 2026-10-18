@@ -17,6 +17,7 @@ async function createApp(config = {}, options = {}) {
   const timers = new Map();
   const events = new Map();
   const frames = new Map();
+  const mutations = [];
   let startup;
   let nextTimer = 1;
   let nextFrame = 1;
@@ -25,10 +26,29 @@ async function createApp(config = {}, options = {}) {
     const classes = new Set();
     const listeners = new Map();
     const attributes = new Map();
+    const styles = new Map();
     return {
+      selector,
       id: selector.startsWith("#") ? selector.slice(1) : "",
       children: [], hidden: false, scrollTop: 0, scrollHeight: 0, clientHeight: 400, offsetTop: 0,
       value: "", textContent: "", disabled: false,
+      style: {
+        setProperty(name, value) { styles.set(name, value); },
+        removeProperty(name) { styles.delete(name); },
+        getPropertyValue(name) { return styles.get(name) || ""; },
+      },
+      getBoundingClientRect() {
+        let hidden = false;
+        for (let parent = this; parent; parent = parent.parentElement) {
+          if (parent.hidden || parent.classList.contains("hidden")) hidden = true;
+        }
+        const rect = this.rect || options.rectangles?.[selector]
+          || (selector === ".card" ? { x: 6, y: 6, width: 744, height: 471 } : {});
+        const { x = 0, y = 0 } = rect;
+        const width = hidden ? 0 : rect.width || 0;
+        const height = hidden ? 0 : rect.height || 0;
+        return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height };
+      },
       classList: {
         add(...names) { names.forEach((name) => classes.add(name)); },
         remove(...names) { names.forEach((name) => classes.delete(name)); },
@@ -68,6 +88,15 @@ async function createApp(config = {}, options = {}) {
     element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
     element(`#${id}`).appendChild(element(`#${id}-label`));
   }
+  for (const [page, ids] of [
+    ["translate", ["input", "output", "lang-a-picker", "lang-b-picker", "swap", "translate-btn", "open-settings", "open-history"]],
+    ["settings", ["cfg-back", "cfg-url", "cfg-key", "cfg-model", "cfg-ui-lang-picker", "cfg-appearance-picker", "cfg-key-clear", "cfg-save"]],
+    ["history", ["history-back", "history-scroll"]],
+  ]) {
+    element(".card").appendChild(element(`#page-${page}`));
+    ids.forEach(id => element(`#page-${page}`).appendChild(element(`#${id}`)));
+  }
+  element("#history-scroll").appendChild(element("#history-list"));
 
   const context = {
     navigator: { platform: options.platform || "Win32" },
@@ -104,7 +133,15 @@ async function createApp(config = {}, options = {}) {
     },
     document: {
       querySelector: element, createElement: () => makeElement(), documentElement: makeElement(),
+      querySelectorAll() { return (options.surfaces || []).map(element); },
       addEventListener(name, handler) { documentListeners.set(name, handler); },
+    },
+    getComputedStyle(element) {
+      return { borderTopLeftRadius: "18px", overflowX: "visible", overflowY: "visible", ...options.styles?.[element.selector] };
+    },
+    MutationObserver: class {
+      constructor(callback) { mutations.push(callback); }
+      observe() {}
     },
     requestAnimationFrame(handler) { const id = nextFrame++; frames.set(id, handler); return id; },
     cancelAnimationFrame(id) { frames.delete(id); },
@@ -118,6 +155,7 @@ async function createApp(config = {}, options = {}) {
   return {
     element, commands, requests, timers, root: context.document.documentElement,
     emit(name, payload) { events.get(name)?.({ payload }); },
+    mutateLayout() { mutations.forEach(callback => callback()); },
     runTimer(id) { const handler = timers.get(id); timers.delete(id); return handler?.(); },
     flushFrames() {
       const pending = [...frames.values()];
@@ -822,7 +860,8 @@ test("choosing Default before the opening frames still releases the prepared nat
 
 test("an explicit native appearance change keeps HTML fills and does not replay the opening animation", async () => {
   const nativeReady = deferred();
-  const app = await createApp({}, { initialPage: "settings", invoke: {
+  const app = await createApp({}, { initialPage: "settings", surfaces: ["#cfg-url"],
+    rectangles: { "#cfg-url": { x: 21, y: 100, width: 714, height: 36 } }, invoke: {
     set_window_appearance: () => nativeReady.promise,
   } });
   app.flushFrames();
@@ -831,8 +870,14 @@ test("an explicit native appearance change keeps HTML fills and does not replay 
   picker.value = "liquid_glass";
   const change = picker.dispatch("change");
   assert.equal(app.root.getAttribute("data-appearance"), "liquid_glass");
+  app.element("#cfg-url").rect = { x: 21, y: 112, width: 714, height: 36 };
+  app.mutateLayout();
+  app.flushFrames();
   nativeReady.resolve(true);
   await change;
+  app.flushFrames();
+  const updated = app.commands.find(call => call.command === "update_glass_surfaces");
+  assert.equal(updated.args.surfaces[0].rect.y, 106);
   assert.equal(app.root.getAttribute("data-native-reveal"), "true");
   // Native masking never replaces the shared control fills or shadows.
   assert.equal(app.root.getAttribute("data-native-glass"), undefined);
@@ -866,6 +911,71 @@ test("a delayed native glass response cannot restore glass after choosing Defaul
   pending[1].resolve(true);
   await second;
   assert.equal(app.root.getAttribute("data-native-reveal"), "false");
+});
+
+test("glass surfaces cut the background tint and reach native setup before the first reveal", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    platform: "MacIntel", nativeReveal: true, surfaces: ["#input", "#cfg-url", "#lang-a-menu"],
+    rectangles: {
+      "#input": { x: 21, y: 69, width: 301, height: 393 },
+      "#cfg-url": { x: 21, y: 100, width: 714, height: 36 },
+      "#lang-a-menu": { x: 21, y: 63, width: 301, height: 300 },
+    },
+  });
+  app.flushFrames();
+  assert.equal(app.commands.some(call => call.command === "reveal_flyout"), false);
+  app.flushFrames();
+  const reveal = app.commands.find(call => call.command === "reveal_flyout").args;
+  assert.deepEqual(JSON.parse(JSON.stringify(reveal.surfaces)), [{
+    rect: { x: 15, y: 63, width: 301, height: 393 },
+    clip: { x: 15, y: 63, width: 301, height: 393 }, radius: 18,
+  }]);
+  const mask = app.element(".card").style.getPropertyValue("--glass-background-mask");
+  const svg = decodeURIComponent(mask.slice(mask.indexOf(",") + 1, -2));
+  assert.match(svg, /<mask id="background"/);
+  assert.match(svg, /x="15" y="63" width="301" height="393" rx="18" fill="black"/);
+  app.element("#lang-a").dispatch("click");
+  app.mutateLayout();
+  app.flushFrames();
+  let updates = app.commands.filter(call => call.command === "update_glass_surfaces");
+  assert.equal(updates.at(-1).args.surfaces.length, 2);
+  assert.ok(updates.at(-1).args.revision > reveal.layoutRevision);
+  app.keydown({ key: "Escape" });
+  app.mutateLayout();
+  app.flushFrames();
+  updates = app.commands.filter(call => call.command === "update_glass_surfaces");
+  assert.equal(updates.at(-1).args.surfaces.length, 1);
+});
+
+test("scrolling clips native glass to the history viewport and skips unchanged geometry", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    initialPage: "history", nativeReveal: true, surfaces: ["#test-history-row"],
+    rectangles: {
+      "#history-scroll": { x: 21, y: 130, width: 714, height: 200 },
+      "#test-history-row": { x: 21, y: 85, width: 714, height: 180 },
+    },
+    styles: { "#history-scroll": { overflowY: "auto" } },
+  });
+  app.element("#test-history-row").parentElement = app.element("#history-scroll");
+  app.flushFrames();
+  app.flushFrames();
+  const reveal = app.commands.find(call => call.command === "reveal_flyout").args;
+  assert.equal(reveal.surfaces[0].rect.y, 79);
+  assert.equal(reveal.surfaces[0].clip.y, 124);
+  assert.equal(reveal.surfaces[0].clip.height, 135);
+  app.element("#test-history-row").rect = { x: 21, y: 50, width: 714, height: 180 };
+  app.documentEvent("scroll");
+  app.flushFrames();
+  let updates = app.commands.filter(call => call.command === "update_glass_surfaces");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].args.surfaces[0].clip.height, 100);
+  app.documentEvent("scroll");
+  app.flushFrames();
+  assert.equal(app.commands.filter(call => call.command === "update_glass_surfaces").length, 1);
+  app.mutateLayout();
+  await app.element("#close-flyout").dispatch("click");
+  app.flushFrames();
+  assert.equal(app.commands.filter(call => call.command === "update_glass_surfaces").length, 1);
 });
 
 test("open language lists close when navigating to settings or hiding the flyout", async () => {

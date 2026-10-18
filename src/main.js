@@ -600,6 +600,9 @@ let appearanceRevision = 0;
 let appearanceStatus = "";
 let windowAppearanceRevision = 0;
 let nativeReveal = false;
+let glassLayoutFrame = null;
+let glassLayoutRevision = 0;
+let glassLayoutSignature = "";
 let historyEntries = [];
 let historyPendingEntries = [];
 let historyHasMore = false;
@@ -910,8 +913,9 @@ function slideIn(origin) {
     secondOpenFrame = requestAnimationFrame(() => {
       secondOpenFrame = null;
       els.card.classList.add("show");
+      const layout = captureGlassSurfaces();
       if (nativeReveal) {
-        invoke("reveal_flyout", { generation }).catch((error) => {
+        invoke("reveal_flyout", { generation, ...layout }).catch((error) => {
           if (generation === flyoutGeneration && !closeRequested) {
             appearanceStatus = `${t("appearanceError")}: ${error}`;
             showConfigStatus(appearanceStatus);
@@ -929,6 +933,8 @@ function slideOutThenHide(generation) {
   closeRequested = true;
   cancelPageFocus();
   cancelSlideInFrames();
+  if (glassLayoutFrame !== null) cancelAnimationFrame(glassLayoutFrame);
+  glassLayoutFrame = null;
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
     hideTimer = null;
@@ -944,6 +950,7 @@ function showPage(page) {
   els.pageTranslate.classList.toggle("hidden", currentPage !== "translate");
   els.pageSettings.classList.toggle("hidden", currentPage !== "settings");
   els.pageHistory.classList.toggle("hidden", currentPage !== "history");
+  scheduleGlassSurfaces();
   // Invalidate an older history request when leaving or reopening the page.
   historyRequestVersion++;
   historyLoading = false;
@@ -1076,6 +1083,10 @@ function applyAppearance(value) {
   currentAppearance = APPEARANCES.some((option) => option.value === value) ? value : "default";
   els.cfgAppearance.value = currentAppearance;
   document.documentElement.setAttribute("data-appearance", currentAppearance);
+  if (currentAppearance !== "liquid_glass") {
+    els.card.style.removeProperty("--glass-background-mask");
+    glassLayoutSignature = "";
+  }
   const picker = languagePickers.find((item) => item.trigger === els.cfgAppearance);
   if (picker) syncLanguagePicker(picker);
 }
@@ -1087,6 +1098,71 @@ function applyNativeReveal(enabled) {
   document.documentElement.setAttribute("data-native-reveal", String(nativeReveal));
 }
 
+// Only geometry crosses the bridge. The same rounded regions cut holes in the
+// HTML background tint and retain full native frost underneath the controls.
+function captureGlassSurfaces() {
+  const bounds = els.card.getBoundingClientRect();
+  const round = (value) => Math.round(value * 100) / 100;
+  const surfaces = [];
+  if (currentAppearance === "liquid_glass") {
+    const selectors = ".pane, .lang-select, .swap, .secondary, .translate-btn, #open-history, .page-back, .history-entry, #page-settings input, .language-menu";
+    for (const element of document.querySelectorAll(selectors)) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      let left = Math.max(bounds.left, rect.left);
+      let top = Math.max(bounds.top, rect.top);
+      let right = Math.min(bounds.right, rect.right);
+      let bottom = Math.min(bounds.bottom, rect.bottom);
+      for (let parent = element.parentElement; parent && parent !== els.card; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) {
+          const clip = parent.getBoundingClientRect();
+          left = Math.max(left, clip.left);
+          top = Math.max(top, clip.top);
+          right = Math.min(right, clip.right);
+          bottom = Math.min(bottom, clip.bottom);
+        }
+      }
+      if (right <= left || bottom <= top) continue;
+      const radius = Math.min(parseFloat(getComputedStyle(element).borderTopLeftRadius) || 0, rect.width / 2, rect.height / 2);
+      surfaces.push({
+        rect: { x: round(rect.left - bounds.left), y: round(rect.top - bounds.top), width: round(rect.width), height: round(rect.height) },
+        clip: { x: round(left - bounds.left), y: round(top - bounds.top), width: round(right - left), height: round(bottom - top) },
+        radius: round(radius),
+      });
+      if (surfaces.length === 128) break;
+    }
+    const signature = JSON.stringify([bounds.width, bounds.height, surfaces]);
+    if (signature !== glassLayoutSignature) {
+      glassLayoutSignature = signature;
+      const rectangle = ({ x, y, width, height }) => `x="${x}" y="${y}" width="${width}" height="${height}"`;
+      const clips = surfaces.map((surface, index) => `<clipPath id="c${index}"><rect ${rectangle(surface.clip)}/></clipPath>`).join("");
+      const holes = surfaces.map((surface, index) => `<rect ${rectangle(surface.rect)} rx="${surface.radius}" fill="black" clip-path="url(#c${index})"/>`).join("");
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.width}" height="${bounds.height}" viewBox="0 0 ${bounds.width} ${bounds.height}"><defs>${clips}<mask id="background" maskUnits="userSpaceOnUse" x="0" y="0" width="${bounds.width}" height="${bounds.height}"><rect width="100%" height="100%" fill="white"/>${holes}</mask></defs><rect width="100%" height="100%" fill="white" mask="url(#background)"/></svg>`;
+      els.card.style.setProperty("--glass-background-mask", `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
+    }
+  }
+  return { surfaces, layoutRevision: ++glassLayoutRevision };
+}
+
+function scheduleGlassSurfaces() {
+  if (glassLayoutFrame !== null || currentAppearance !== "liquid_glass") return;
+  glassLayoutFrame = requestAnimationFrame(() => {
+    glassLayoutFrame = null;
+    if (closeRequested || !els.card.classList.contains("show") || currentAppearance !== "liquid_glass") return;
+    const previous = glassLayoutSignature;
+    const layout = captureGlassSurfaces();
+    if (!nativeReveal || previous === glassLayoutSignature) return;
+    const generation = flyoutGeneration;
+    invoke("update_glass_surfaces", { generation, revision: layout.layoutRevision, surfaces: layout.surfaces }).catch((error) => {
+      if (generation === flyoutGeneration && !closeRequested && layout.layoutRevision === glassLayoutRevision) {
+        appearanceStatus = `${t("appearanceError")}: ${error}`;
+        showConfigStatus(appearanceStatus);
+      }
+    });
+  });
+}
+
 async function syncWindowAppearance(revision = appearanceRevision) {
   if (!els.card.classList.contains("show") || closeRequested) return;
   const generation = flyoutGeneration;
@@ -1095,11 +1171,17 @@ async function syncWindowAppearance(revision = appearanceRevision) {
     // Only explicit appearance changes update material. Opening already prepared
     // it before the native window became visible; transitionend does no setup.
     const native = await invoke("set_window_appearance", {
-      appearance: currentAppearance, generation, revision: nativeRevision,
+      appearance: currentAppearance, generation, revision: nativeRevision, ...captureGlassSurfaces(),
     });
     if (revision === appearanceRevision && generation === flyoutGeneration
       && nativeRevision === windowAppearanceRevision && !closeRequested) {
       applyNativeReveal(native);
+      if (native) {
+        // Layout can change while the material request is pending (for example,
+        // a settings label wraps). Resend current regions after enabling it.
+        glassLayoutSignature = "";
+        scheduleGlassSurfaces();
+      }
     }
   } catch (error) {
     if (revision === appearanceRevision && generation === flyoutGeneration
@@ -1279,6 +1361,16 @@ window.addEventListener("DOMContentLoaded", async () => {
   // 切换界面语言：立即刷新文案并持久化
   els.cfgUiLang.addEventListener("change", changeUiLanguage);
   els.cfgAppearance.addEventListener("change", changeAppearance);
+  // Scroll and content changes can expose different rounded surface regions.
+  document.addEventListener("scroll", scheduleGlassSurfaces, true);
+  window.addEventListener("resize", scheduleGlassSurfaces);
+  new MutationObserver(scheduleGlassSurfaces).observe(els.card, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"],
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(scheduleGlassSurfaces);
+    [els.card, els.pageTranslate, els.pageSettings, els.pageHistory].forEach((element) => observer.observe(element));
+  }
 
   // Close an open list before handling the flyout's Escape shortcut.
   document.addEventListener("pointerdown", (event) => {
