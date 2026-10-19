@@ -1517,7 +1517,8 @@ pub fn run() {
 
             TrayIconBuilder::with_id("main")
                 .icon(tauri::include_image!("icons/tray.png"))
-                .icon_as_template(false)
+                // Let macOS tint the monochrome icon for the menu bar appearance.
+                .icon_as_template(true)
                 .tooltip(tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
