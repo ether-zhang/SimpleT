@@ -292,7 +292,8 @@ body {
   justify-content: center;
   gap: 3px;
   min-height: 56px;
-  padding: 9px 8px;
+  /* Balance the visible glyphs within the two-line button. */
+  padding: 10px 8px 8px;
 }
 
 .middle button {
