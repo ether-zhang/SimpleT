@@ -117,8 +117,17 @@
           </button>
           <div id="cfg-model-menu" class="language-menu model-menu" hidden>
             <input id="cfg-model-search" class="model-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="cfg-model-options" aria-expanded="false" autocomplete="off" spellcheck="false" />
-            <div id="cfg-model-options" class="model-options" role="listbox"></div>
-            <p id="cfg-model-empty" class="model-empty" role="status" aria-live="polite" hidden></p>
+            <div class="model-columns">
+              <div class="model-column model-provider-column">
+                <span id="cfg-model-providers-title" class="model-column-title">供应商</span>
+                <div id="cfg-model-providers" class="model-providers" role="listbox" aria-labelledby="cfg-model-providers-title" tabindex="0"></div>
+              </div>
+              <div class="model-column">
+                <span id="cfg-model-models-title" class="model-column-title">模型</span>
+                <div id="cfg-model-options" class="model-options" role="listbox" aria-labelledby="cfg-model-models-title" tabindex="0"></div>
+                <p id="cfg-model-empty" class="model-empty" role="status" aria-live="polite" hidden></p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

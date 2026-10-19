@@ -88,7 +88,7 @@ async function createApp(config = {}, options = {}) {
     element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
     element(`#${id}`).appendChild(element(`#${id}-label`));
   }
-  for (const id of ["cfg-model-search", "cfg-model-options", "cfg-model-empty"]) {
+  for (const id of ["cfg-model-search", "cfg-model-providers", "cfg-model-options", "cfg-model-empty"]) {
     element("#cfg-model-menu").appendChild(element(`#${id}`));
   }
   for (const [page, ids] of [
@@ -1317,7 +1317,7 @@ for (const outcome of ["success", "failure"]) {
     old.resolve(outcome === "success" ? ["old/model"] : Promise.reject({ code: "http", status: 401 }));
     await oldRequest;
     assert.equal(app.element("#cfg-model").disabled, false);
-    assert.equal(app.element("#cfg-model-options").children[0].children[1].textContent, "new/model");
+    assert.equal(app.element("#cfg-model-options").children[0].getAttribute("aria-label"), "new/model");
     assert.match(app.element("#cfg-model-status").textContent, /服务可用/);
   });
 }
@@ -1372,7 +1372,7 @@ test("a large catalog searches full IDs, renders them literally, and saves the e
   search.dispatch("input");
   const options = app.element("#cfg-model-options").children;
   assert.equal(options.length, 1);
-  assert.equal(options[0].children[1].textContent, longId);
+  assert.equal(options[0].children[1].textContent, longId.slice("provider/".length));
   assert.equal(options[0].children[1].title, longId);
   assert.equal(options[0].children[1].children.length, 0);
   search.dispatch("keydown", { key: "Enter" });
@@ -1450,4 +1450,152 @@ test("reopening model search with End navigates the whole catalog after filterin
   assert.equal(app.element("#cfg-model-search").getAttribute("aria-activedescendant"), options[1].id);
   app.element("#cfg-model-search").dispatch("keydown", { key: "Enter" });
   assert.equal(app.element("#cfg-model").value, "new-model");
+});
+
+function modelProviderOption(app, provider) {
+  return app.element("#cfg-model-providers").children.find((option) => option.getAttribute("data-provider") === provider);
+}
+
+function visibleModelIds(app) {
+  return app.element("#cfg-model-options").children.map((option) => option.getAttribute("aria-label"));
+}
+
+test("the model cascader shows providers on the left and commits only a model chosen on the right", async () => {
+  const app = await createApp({ model: "openai/gpt-a" }, { invoke: {
+    list_models: () => ["openai/gpt-a", "anthropic/claude-a", "anthropic/claude-b", "google/gemini-a"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(app.element("#cfg-model-providers").children.length, 3);
+  assert.equal(modelProviderOption(app, "openai").children[0].textContent, "OpenAI");
+  assert.equal(modelProviderOption(app, "openai").getAttribute("aria-selected"), "true");
+  assert.deepEqual(visibleModelIds(app), ["openai/gpt-a"]);
+  modelProviderOption(app, "anthropic").dispatch("click");
+  assert.deepEqual(visibleModelIds(app), ["anthropic/claude-a", "anthropic/claude-b"]);
+  assert.equal(app.element("#cfg-model-options").children[0].children[1].textContent, "claude-a");
+  assert.equal(app.element("#cfg-model").value, "openai/gpt-a");
+  assert.equal(app.element("#cfg-model-menu").hidden, false);
+  assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+  app.element("#cfg-model-options").children[1].dispatch("click");
+  assert.equal(app.element("#cfg-model").value, "anthropic/claude-b");
+  assert.equal(app.element("#cfg-model-menu").hidden, true);
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.model, "anthropic/claude-b");
+});
+
+test("cancelling provider browsing preserves the chosen model and reopening restores its provider", async () => {
+  const app = await createApp({ model: "openai/gpt-a" }, { invoke: {
+    list_models: () => ["anthropic/claude-a", "openai/gpt-a"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  modelProviderOption(app, "anthropic").dispatch("click");
+  app.documentEvent("pointerdown", { target: app.element("#cfg-url") });
+  assert.equal(app.element("#cfg-model").value, "openai/gpt-a");
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(modelProviderOption(app, "openai").getAttribute("aria-selected"), "true");
+  assert.deepEqual(visibleModelIds(app), ["openai/gpt-a"]);
+  assert.equal(app.element("#cfg-model-options").children[0].getAttribute("aria-selected"), "true");
+});
+
+test("model search finds other providers and filters both columns without altering the saved choice", async () => {
+  const app = await createApp({ model: "openai/gpt-a" }, { invoke: {
+    list_models: () => ["openai/gpt-a", "anthropic/claude-a", "anthropic/claude-b", "x-ai/grok-a"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  const search = app.element("#cfg-model-search");
+  search.value = "CLAUDE";
+  search.dispatch("input");
+  assert.equal(app.element("#cfg-model-providers").children.length, 1);
+  assert.equal(modelProviderOption(app, "anthropic").getAttribute("aria-selected"), "true");
+  assert.deepEqual(visibleModelIds(app), ["anthropic/claude-a", "anthropic/claude-b"]);
+  search.value = "xAI";
+  search.dispatch("input");
+  assert.deepEqual(visibleModelIds(app), ["x-ai/grok-a"]);
+  search.value = "not-a-model";
+  search.dispatch("input");
+  assert.equal(app.element("#cfg-model-providers").children.length, 0);
+  assert.equal(app.element("#cfg-model-empty").hidden, false);
+  assert.equal(app.element("#cfg-model-providers").getAttribute("aria-activedescendant"), undefined);
+  assert.equal(app.element("#cfg-model").value, "openai/gpt-a");
+  search.value = "";
+  search.dispatch("input");
+  assert.equal(app.element("#cfg-model-providers").children.length, 3);
+  assert.deepEqual(visibleModelIds(app), ["openai/gpt-a"]);
+});
+
+test("unknown provider names and nested model paths display literally and retain their full IDs", async () => {
+  const id = "research-lab/release/model:v2";
+  const app = await createApp({ model: id }, { invoke: {
+    list_models: () => [id, "__proto__/literal", "<provider>/literal"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(modelProviderOption(app, "research-lab").children[0].textContent, "research-lab");
+  assert.equal(app.element("#cfg-model-options").children[0].children[1].textContent, "release/model:v2");
+  assert.equal(app.element("#cfg-model-options").children[0].children[1].title, id);
+  assert.equal(modelProviderOption(app, "<provider>").children[0].textContent, "<provider>");
+  assert.equal(modelProviderOption(app, "<provider>").children[0].children.length, 0);
+  modelProviderOption(app, "__proto__").dispatch("click");
+  assert.deepEqual(visibleModelIds(app), ["__proto__/literal"]);
+  app.element("#cfg-model-options").children[0].dispatch("click");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.model, "__proto__/literal");
+});
+
+test("models without a provider prefix share a localized Current service group", async () => {
+  const app = await createApp({ model: "gpt-4.1" }, { invoke: {
+    list_models: () => ["gpt-4.1", "llama3:latest", "other/model"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(modelProviderOption(app, "").children[0].textContent, "当前服务");
+  assert.deepEqual(visibleModelIds(app), ["gpt-4.1", "llama3:latest"]);
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(modelProviderOption(app, "").children[0].textContent, "Current service");
+  assert.equal(app.element("#cfg-model-providers-title").textContent, "Providers");
+  assert.equal(app.element("#cfg-model-models-title").textContent, "Models");
+  assert.equal(app.element("#cfg-model").value, "gpt-4.1");
+  assert.equal(app.commands.filter(({ command }) => command === "list_models").length, 1);
+});
+
+test("keyboard users can traverse provider and model columns without committing the provider", async () => {
+  const app = await createApp({ model: "openai/gpt-a" }, { invoke: {
+    list_models: () => ["anthropic/claude-a", "anthropic/claude-b", "openai/gpt-a"],
+  } });
+  app.element("#cfg-model").dispatch("click");
+  const providers = app.element("#cfg-model-providers");
+  const models = app.element("#cfg-model-options");
+  app.element("#cfg-model-search").dispatch("keydown", { key: "Tab" });
+  assert.equal(providers.focused, true);
+  providers.dispatch("keydown", { key: "Home", isComposing: true });
+  assert.deepEqual(visibleModelIds(app), ["openai/gpt-a"]);
+  providers.dispatch("keydown", { key: "Home" });
+  assert.deepEqual(visibleModelIds(app), ["anthropic/claude-a", "anthropic/claude-b"]);
+  assert.equal(app.element("#cfg-model").value, "openai/gpt-a");
+  providers.dispatch("keydown", { key: "Enter" });
+  assert.equal(models.focused, true);
+  assert.equal(app.element("#cfg-model-menu").hidden, false);
+  models.dispatch("keydown", { key: "ArrowDown" });
+  assert.equal(models.getAttribute("aria-activedescendant"), models.children[1].id);
+  models.dispatch("keydown", { key: "ArrowLeft" });
+  providers.dispatch("keydown", { key: "Tab" });
+  models.dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#cfg-model").value, "anthropic/claude-b");
+  assert.equal(app.element("#cfg-model-menu").hidden, true);
+});
+
+test("large catalogs expose only one provider's models at a time while searching across all groups", async () => {
+  const catalog = Array.from({ length: 20 }, (_, provider) =>
+    Array.from({ length: 50 }, (_, model) => `vendor-${String(provider).padStart(2, "0")}/model-${model}`)).flat();
+  const app = await createApp({ model: catalog[0] }, { invoke: { list_models: () => catalog } });
+  app.element("#cfg-model").dispatch("click");
+  assert.equal(app.element("#cfg-model-providers").children.length, 20);
+  assert.equal(visibleModelIds(app).length, 50);
+  modelProviderOption(app, "vendor-19").dispatch("click");
+  assert.equal(visibleModelIds(app).every((id) => id.startsWith("vendor-19/")), true);
+  app.element("#cfg-model-search").value = "model-49";
+  app.element("#cfg-model-search").dispatch("input");
+  assert.equal(app.element("#cfg-model-providers").children.length, 20);
+  assert.deepEqual(visibleModelIds(app), ["vendor-19/model-49"]);
+  app.element("#cfg-model-options").children[0].dispatch("click");
+  assert.equal(app.element("#cfg-model").value, "vendor-19/model-49");
 });

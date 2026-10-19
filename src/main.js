@@ -70,6 +70,9 @@ const I18N = {
     modelConnect: "连接服务后选择模型",
     modelSelect: "请选择模型",
     modelSearch: "搜索模型…",
+    modelProviders: "供应商",
+    modelModels: "模型",
+    modelCurrentService: "当前服务",
     modelsNoMatch: "没有匹配的模型",
     uiLangLabel: "界面语言",
     clearKey: "清除",
@@ -125,6 +128,9 @@ const I18N = {
     modelConnect: "Connect to select a model",
     modelSelect: "Select a model",
     modelSearch: "Search models…",
+    modelProviders: "Providers",
+    modelModels: "Models",
+    modelCurrentService: "Current service",
     modelsNoMatch: "No matching models",
     uiLangLabel: "UI language",
     clearKey: "Clear",
@@ -180,6 +186,9 @@ const I18N = {
     modelConnect: "接続後にモデルを選択",
     modelSelect: "モデルを選択",
     modelSearch: "モデルを検索…",
+    modelProviders: "プロバイダー",
+    modelModels: "モデル",
+    modelCurrentService: "現在のサービス",
     modelsNoMatch: "該当するモデルがありません",
     uiLangLabel: "表示言語",
     clearKey: "消去",
@@ -235,6 +244,9 @@ const I18N = {
     modelConnect: "연결 후 모델 선택",
     modelSelect: "모델 선택",
     modelSearch: "모델 검색…",
+    modelProviders: "공급자",
+    modelModels: "모델",
+    modelCurrentService: "현재 서비스",
     modelsNoMatch: "일치하는 모델이 없습니다",
     uiLangLabel: "인터페이스 언어",
     clearKey: "지우기",
@@ -290,6 +302,9 @@ const I18N = {
     modelConnect: "Connectez-vous pour choisir un modèle",
     modelSelect: "Choisir un modèle",
     modelSearch: "Rechercher un modèle…",
+    modelProviders: "Fournisseurs",
+    modelModels: "Modèles",
+    modelCurrentService: "Service actuel",
     modelsNoMatch: "Aucun modèle correspondant",
     uiLangLabel: "Langue de l'interface",
     clearKey: "Effacer",
@@ -345,6 +360,9 @@ const I18N = {
     modelConnect: "Verbinden, um ein Modell auszuwählen",
     modelSelect: "Modell auswählen",
     modelSearch: "Modelle suchen…",
+    modelProviders: "Anbieter",
+    modelModels: "Modelle",
+    modelCurrentService: "Aktueller Service",
     modelsNoMatch: "Keine passenden Modelle",
     uiLangLabel: "Anzeigesprache",
     clearKey: "Löschen",
@@ -400,6 +418,9 @@ const I18N = {
     modelConnect: "Conecta para elegir un modelo",
     modelSelect: "Elegir un modelo",
     modelSearch: "Buscar modelos…",
+    modelProviders: "Proveedores",
+    modelModels: "Modelos",
+    modelCurrentService: "Servicio actual",
     modelsNoMatch: "No hay modelos coincidentes",
     uiLangLabel: "Idioma de la interfaz",
     clearKey: "Borrar",
@@ -455,6 +476,9 @@ const I18N = {
     modelConnect: "Подключитесь для выбора модели",
     modelSelect: "Выберите модель",
     modelSearch: "Поиск моделей…",
+    modelProviders: "Поставщики",
+    modelModels: "Модели",
+    modelCurrentService: "Текущий сервис",
     modelsNoMatch: "Подходящих моделей нет",
     uiLangLabel: "Язык интерфейса",
     clearKey: "Очистить",
@@ -482,6 +506,11 @@ const APPEARANCES = [
   { value: "default", labelKey: "appearanceDefault" },
   { value: "liquid_glass", labelKey: "appearanceGlass" },
 ];
+const MODEL_PROVIDER_NAMES = {
+  openai: "OpenAI", anthropic: "Anthropic", google: "Google", "meta-llama": "Meta",
+  deepseek: "DeepSeek", qwen: "Qwen", mistralai: "Mistral", "x-ai": "xAI",
+  openrouter: "OpenRouter", microsoft: "Microsoft", nvidia: "NVIDIA",
+};
 
 function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
@@ -559,7 +588,7 @@ function syncLanguagePicker(picker) {
     : t(modelCatalogState === "ready" ? "modelSelect" : "modelConnect");
   picker.label.title = picker.label.textContent;
   picker.trigger.setAttribute("aria-label", `${t(picker.labelKey)}: ${picker.label.textContent}`);
-  (picker.list || picker.menu).setAttribute("aria-label", t(picker.labelKey));
+  (picker.list || picker.menu).setAttribute("aria-label", t(picker.providerList ? "modelModels" : picker.labelKey));
   picker.options.forEach((option, index) => {
     option.setAttribute("aria-selected", String(picker.visibleItems[index].value === picker.trigger.value));
   });
@@ -570,18 +599,20 @@ function renderLanguagePicker(picker) {
     picker.trigger.value = picker.defaultValue;
   }
   const query = picker.searchInput?.value.trim().toLocaleLowerCase(currentLang) || "";
-  picker.visibleItems = picker.items.filter((item) => languageChoiceLabel(item).toLocaleLowerCase(currentLang).includes(query));
+  picker.visibleItems = picker.providerList ? renderModelProviders(picker, query)
+    : picker.items.filter((item) => languageChoiceLabel(item).toLocaleLowerCase(currentLang).includes(query));
   picker.options = picker.visibleItems.map((lang, index) => {
     const option = document.createElement("div");
     option.id = `${picker.trigger.id}-option-${picker.searchInput ? index : lang.code || lang.value}`;
     option.className = "language-option";
     option.setAttribute("role", "option");
+    if (picker.providerList) option.setAttribute("aria-label", lang.value);
     const check = document.createElement("span");
     check.className = "language-check";
     check.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
-    label.textContent = languageChoiceLabel(lang);
-    label.title = label.textContent;
+    label.textContent = picker.providerList ? splitModelId(lang.value).name : languageChoiceLabel(lang);
+    label.title = languageChoiceLabel(lang);
     option.appendChild(check);
     option.appendChild(label);
     option.addEventListener("pointermove", () => activateLanguageOption(picker, index, false));
@@ -598,6 +629,7 @@ function activateLanguageOption(picker, index, scroll = true) {
     picker.activeIndex = -1;
     picker.trigger.removeAttribute("aria-activedescendant");
     picker.searchInput?.removeAttribute("aria-activedescendant");
+    picker.list?.removeAttribute("aria-activedescendant");
     return;
   }
   index = Math.max(0, Math.min(picker.options.length - 1, index));
@@ -606,11 +638,16 @@ function activateLanguageOption(picker, index, scroll = true) {
   const option = picker.options[index];
   picker.trigger.setAttribute("aria-activedescendant", option.id);
   picker.searchInput?.setAttribute("aria-activedescendant", option.id);
+  picker.list?.setAttribute("aria-activedescendant", option.id);
   if (!scroll) return;
   // Scroll only the list, so keyboard navigation cannot move the flyout itself.
+  scrollPickerOption(picker.list || picker.menu, option);
+}
+
+function scrollPickerOption(list, option) {
+  if (!option) return;
   const top = option.offsetTop;
   const bottom = top + option.offsetHeight;
-  const list = picker.list || picker.menu;
   if (top < list.scrollTop) list.scrollTop = top;
   else if (bottom > list.scrollTop + list.clientHeight) {
     list.scrollTop = bottom - list.clientHeight;
@@ -626,6 +663,7 @@ function closeLanguagePicker(restoreFocus = false) {
   picker.trigger.removeAttribute("aria-activedescendant");
   picker.searchInput?.setAttribute("aria-expanded", "false");
   picker.searchInput?.removeAttribute("aria-activedescendant");
+  picker.list?.removeAttribute("aria-activedescendant");
   if (restoreFocus) picker.trigger.focus();
   return true;
 }
@@ -638,6 +676,9 @@ function showLanguagePicker(picker, index) {
   picker.searchTime = 0;
   if (picker.searchInput) {
     picker.searchInput.value = "";
+    if (picker.providerList && picker.trigger.value) {
+      picker.activeProvider = splitModelId(picker.trigger.value).provider;
+    }
     renderLanguagePicker(picker);
     picker.searchInput.setAttribute("aria-expanded", "true");
   }
@@ -645,6 +686,9 @@ function showLanguagePicker(picker, index) {
   picker.trigger.setAttribute("aria-expanded", "true");
   (picker.searchInput || picker.trigger).focus();
   activateLanguageOption(picker, index ?? picker.visibleItems.findIndex((lang) => lang.value === picker.trigger.value));
+  if (picker.providerList) {
+    scrollPickerOption(picker.providerList, picker.providerOptions[picker.providerGroups.findIndex((group) => group.value === picker.activeProvider)]);
+  }
 }
 
 function chooseLanguage(picker, index) {
@@ -660,6 +704,16 @@ function chooseLanguage(picker, index) {
 function onLanguageKeydown(picker, event) {
   if (event.isComposing || event.keyCode === 229 || picker.trigger.disabled) return;
   const expanded = openLanguagePicker === picker;
+  if (expanded && picker.providerList && event.key === "Tab") {
+    const target = event.target === picker.searchInput ? (event.shiftKey ? null : picker.providerList)
+      : event.target === picker.providerList ? (event.shiftKey ? picker.searchInput : picker.list)
+      : event.target === picker.list && event.shiftKey ? picker.providerList : null;
+    if (target && (target !== picker.list || picker.options.length)) {
+      event.preventDefault();
+      target.focus({ preventScroll: true });
+    } else closeLanguagePicker();
+    return;
+  }
   if (event.target === picker.searchInput && !["Enter", "ArrowDown", "ArrowUp", "Tab"].includes(event.key)) return;
   if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
     event.preventDefault();
@@ -678,6 +732,7 @@ function onLanguageKeydown(picker, event) {
     event.preventDefault();
     if (!expanded) showLanguagePicker(picker);
     if (picker.searchInput) {
+      picker.searchInput.focus({ preventScroll: true });
       picker.searchInput.value = event.key;
       renderLanguagePicker(picker);
       activateLanguageOption(picker, 0);
@@ -728,7 +783,89 @@ function createLanguagePicker(id, labelKey, defaultValue, items = LANGUAGES, onC
     });
     picker.searchInput.addEventListener("keydown", (event) => onLanguageKeydown(picker, event));
   }
+  if (picker.providerList) {
+    picker.providerList.addEventListener("keydown", (event) => onModelColumnKeydown(picker, event));
+    picker.list.addEventListener("keydown", (event) => onModelColumnKeydown(picker, event));
+  }
   return picker;
+}
+
+function splitModelId(value) {
+  const slash = value.indexOf("/");
+  return slash > 0 && slash < value.length - 1
+    ? { provider: value.slice(0, slash), name: value.slice(slash + 1) }
+    : { provider: "", name: value };
+}
+
+function modelProviderLabel(value) {
+  if (!value) return t("modelCurrentService");
+  return Object.hasOwn(MODEL_PROVIDER_NAMES, value) ? MODEL_PROVIDER_NAMES[value] : value;
+}
+
+function renderModelProviders(picker, query) {
+  const groups = new Map();
+  for (const item of picker.items) {
+    const { provider } = splitModelId(item.value);
+    const label = modelProviderLabel(provider);
+    if (query && ![item.value, label].some((text) => text.toLocaleLowerCase(currentLang).includes(query))) continue;
+    if (!groups.has(provider)) groups.set(provider, { value: provider, label, items: [] });
+    groups.get(provider).items.push(item);
+  }
+  picker.providerGroups = [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, currentLang));
+  if (!groups.has(picker.activeProvider)) {
+    const selectedProvider = splitModelId(picker.trigger.value).provider;
+    picker.activeProvider = groups.has(selectedProvider) ? selectedProvider : picker.providerGroups[0]?.value ?? null;
+  }
+  picker.providerOptions = picker.providerGroups.map((group, index) => {
+    const option = document.createElement("div");
+    option.id = `${picker.trigger.id}-provider-${index}`;
+    option.className = "model-provider";
+    option.setAttribute("role", "option");
+    option.setAttribute("data-provider", group.value);
+    option.setAttribute("aria-selected", String(group.value === picker.activeProvider));
+    option.setAttribute("aria-controls", picker.list.id);
+    const label = document.createElement("span");
+    label.textContent = group.label;
+    label.title = group.value || group.label;
+    option.appendChild(label);
+    option.addEventListener("click", () => selectModelProvider(picker, index));
+    return option;
+  });
+  picker.providerList.replaceChildren(...picker.providerOptions);
+  const active = picker.providerGroups.findIndex((group) => group.value === picker.activeProvider);
+  if (active < 0) picker.providerList.removeAttribute("aria-activedescendant");
+  else picker.providerList.setAttribute("aria-activedescendant", picker.providerOptions[active].id);
+  return groups.get(picker.activeProvider)?.items || [];
+}
+
+function selectModelProvider(picker, index) {
+  if (picker.trigger.disabled || !picker.providerGroups[index]) return;
+  picker.activeProvider = picker.providerGroups[index].value;
+  renderLanguagePicker(picker);
+  picker.list.scrollTop = 0;
+  activateLanguageOption(picker, picker.visibleItems.findIndex((item) => item.value === picker.trigger.value));
+  scrollPickerOption(picker.providerList, picker.providerOptions[index]);
+  picker.providerList.focus({ preventScroll: true });
+}
+
+function onModelColumnKeydown(picker, event) {
+  if (event.isComposing || event.keyCode === 229 || picker.trigger.disabled || openLanguagePicker !== picker) return;
+  if (event.target === picker.providerList && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    const current = picker.providerGroups.findIndex((group) => group.value === picker.activeProvider);
+    const index = event.key === "Home" ? 0 : event.key === "End" ? picker.providerGroups.length - 1
+      : Math.max(0, Math.min(picker.providerGroups.length - 1, current + (event.key === "ArrowDown" ? 1 : -1)));
+    selectModelProvider(picker, index);
+  } else if (event.target === picker.providerList && ["ArrowRight", "Enter", " "].includes(event.key)) {
+    event.preventDefault();
+    if (picker.options.length) {
+      picker.list.focus({ preventScroll: true });
+      activateLanguageOption(picker, picker.activeIndex);
+    }
+  } else if (event.target === picker.list && event.key === "ArrowLeft") {
+    event.preventDefault();
+    picker.providerList.focus({ preventScroll: true });
+  } else onLanguageKeydown(picker, event);
 }
 
 function normalizeModelUrl(value) {
@@ -770,6 +907,9 @@ function updateModelCatalogUI() {
   modelPicker.trigger.setAttribute("aria-busy", String(modelCatalogState === "loading"));
   modelPicker.searchInput.placeholder = t("modelSearch");
   modelPicker.searchInput.setAttribute("aria-label", t("modelSearch"));
+  modelPicker.providerList.setAttribute("aria-label", t("modelProviders"));
+  els.modelProvidersTitle.textContent = t("modelProviders");
+  els.modelModelsTitle.textContent = t("modelModels");
   modelPicker.empty.textContent = t("modelsNoMatch");
   syncLanguagePicker(modelPicker);
 }
@@ -1525,6 +1665,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     cfgModel: document.querySelector("#cfg-model"),
     modelStatus: document.querySelector("#cfg-model-status"),
     modelRetry: document.querySelector("#cfg-model-retry"),
+    modelProvidersTitle: document.querySelector("#cfg-model-providers-title"),
+    modelModelsTitle: document.querySelector("#cfg-model-models-title"),
     cfgUiLang: document.querySelector("#cfg-ui-lang"),
     cfgAppearance: document.querySelector("#cfg-appearance"),
     openSettings: document.querySelector("#open-settings"),
@@ -1550,6 +1692,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     searchInput: document.querySelector("#cfg-model-search"),
     list: document.querySelector("#cfg-model-options"),
     empty: document.querySelector("#cfg-model-empty"),
+    providerList: document.querySelector("#cfg-model-providers"),
+    providerGroups: [], providerOptions: [], activeProvider: null,
   });
   languagePickers = [
     createLanguagePicker("lang-a", "sourceLanguage", "Chinese"),
