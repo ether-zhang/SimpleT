@@ -789,9 +789,8 @@ body {
   --fg: #20232e;
   --muted: #656774;
   --border: rgba(125, 129, 151, 0.18);
-  --frosted-fill: rgba(255, 255, 255, 0.335);
-  --frosted-sheen: radial-gradient(ellipse 65% 100% at 50% 38%, rgba(255, 255, 255, 0.08), transparent 85%),
-    radial-gradient(ellipse 50% 60% at 100% 100%, rgba(210, 230, 255, 0.025), transparent 80%);
+  --frosted-fill: rgba(70, 73, 94, 0.045);
+  --frosted-sheen: linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 48%, rgba(25, 27, 40, 0.025));
   --glass-surface-tint: rgba(255, 255, 255, 0.43);
   --glass-fill: radial-gradient(ellipse at 12% 0%, rgba(255, 255, 255, 0.58), transparent 58%),
     linear-gradient(160deg, rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.12) 55%, rgba(255, 255, 255, 0.28));
@@ -811,8 +810,8 @@ body {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
-  -webkit-backdrop-filter: blur(32px) saturate(1.3);
-  backdrop-filter: blur(32px) saturate(1.3);
+  -webkit-backdrop-filter: blur(3px) saturate(1.12);
+  backdrop-filter: blur(3px) saturate(1.12);
 }
 :root[data-appearance="liquid_glass"] .card::before {
   content: "";
@@ -913,9 +912,8 @@ body {
     --fg: #f4f4fa;
     --muted: #b9b9c9;
     --border: rgba(218, 219, 242, 0.14);
-    --frosted-fill: rgba(86, 86, 112, 0.33);
-    --frosted-sheen: radial-gradient(ellipse 65% 100% at 50% 38%, rgba(255, 255, 255, 0.0525), transparent 85%),
-      radial-gradient(ellipse 50% 60% at 100% 100%, rgba(210, 230, 255, 0.025), transparent 80%);
+    --frosted-fill: rgba(50, 52, 69, 0.06);
+    --frosted-sheen: linear-gradient(145deg, rgba(255, 255, 255, 0.025), transparent 48%, rgba(0, 0, 0, 0.035));
     --glass-surface-tint: rgba(86, 86, 112, 0.42);
     --glass-fill: radial-gradient(ellipse at 12% 0%, rgba(230, 233, 255, 0.14), transparent 58%),
       linear-gradient(160deg, rgba(187, 190, 222, 0.20), rgba(163, 166, 198, 0.11) 55%, rgba(206, 209, 238, 0.18));

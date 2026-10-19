@@ -7,6 +7,8 @@ use std::{
 };
 
 mod glass;
+#[cfg(target_os = "macos")]
+mod glass_blur;
 mod history;
 mod models;
 use history::{HistoryPage, HistoryStore};

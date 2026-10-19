@@ -1,4 +1,4 @@
-// A single content-view mask reveals the native frost and WebView together.
+// A single content-view mask reveals native glass, frost and the WebView together.
 // The material stays installed between openings; no compositor changes at rest.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub struct ClipRect {
@@ -98,8 +98,18 @@ fn clip_rect(width: f64, height: f64, flipped: bool, visible: bool) -> ClipRect 
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use objc2::{rc::Retained, ClassType};
-    use objc2_app_kit::{NSView, NSVisualEffectView};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Once,
+    };
+
+    use objc2::{
+        msg_send,
+        rc::Retained,
+        runtime::{AnyClass, Bool, Imp, Sel},
+        sel, ClassType, Encode,
+    };
+    use objc2_app_kit::{NSPanel, NSView, NSVisualEffectView, NSWindow};
     use objc2_core_graphics::CGColor;
     use objc2_foundation::{
         ns_string, MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSValue,
@@ -108,9 +118,60 @@ mod macos {
         CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction,
     };
 
-    // Control opacity compensates for the background already beneath its mask.
+    // Legacy fallback when the OS has no native Liquid Glass implementation.
     const BACKGROUND_FROST_ALPHA: f64 = 0.775;
+    // Control opacity compensates for the background already beneath its mask.
     const CONTROL_FROST_ALPHA: f64 = 1.0;
+    const CARD_CORNER_RADIUS: f64 = 14.0;
+
+    static GLASS_ACTIVE_APPEARANCE: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C-unwind" fn glass_active_appearance(window: &NSWindow, _: Sel) -> Bool {
+        if GLASS_ACTIVE_APPEARANCE.load(Ordering::Relaxed) {
+            Bool::YES
+        } else {
+            // Preserve AppKit's normal appearance when glass is disabled.
+            unsafe { msg_send![super(window, NSPanel::class()), _hasActiveAppearance] }
+        }
+    }
+
+    fn keep_glass_appearance_active(root: &NSView, enabled: bool) {
+        let Some(window) = root.window() else { return };
+        let class = window.class();
+        // Scope this presentation-only override to our own panel class. Real key
+        // status, keyboard input, activation policy and other apps are untouched.
+        if class.name() != c"FlyoutPanel" {
+            return;
+        }
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            let selector = sel!(_hasActiveAppearance);
+            let Some(method) = NSPanel::class().instance_method(selector) else {
+                return;
+            };
+            if method.arguments_count() != 2
+                || method.return_type().to_bytes() != Bool::ENCODING.to_string().as_bytes()
+            {
+                return;
+            }
+            // NSGlassEffectView has no public active-state setting. Probe the
+            // private appearance selector and inherit its exact ABI; older OSes
+            // without it retain the system behaviour. Never replace AppKit's
+            // implementation or pretend that the panel actually has focus.
+            unsafe {
+                let implementation: Imp = std::mem::transmute(
+                    glass_active_appearance as unsafe extern "C-unwind" fn(&NSWindow, Sel) -> Bool,
+                );
+                objc2::ffi::class_addMethod(
+                    class as *const AnyClass as *mut AnyClass,
+                    selector,
+                    implementation,
+                    objc2::ffi::method_getTypeEncoding(method),
+                );
+            }
+        });
+        GLASS_ACTIVE_APPEARANCE.store(enabled, Ordering::Relaxed);
+    }
 
     fn content_view(window: &tauri::WebviewWindow) -> Result<&NSView, String> {
         MainThreadMarker::new().ok_or("磨砂材质必须在主线程更新")?;
@@ -119,13 +180,22 @@ mod macos {
         unsafe { (pointer as *const NSView).as_ref() }.ok_or("窗口视图不可用".into())
     }
 
+    fn is_glass_view(view: &NSView) -> bool {
+        AnyClass::get(c"NSGlassEffectView").is_some_and(|class| view.isKindOfClass(class))
+    }
+
     pub fn set_appearance(window: &tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
         use window_vibrancy::{
-            apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+            apply_liquid_glass, apply_vibrancy, clear_liquid_glass, clear_vibrancy,
+            LiquidGlassOptions, NSGlassEffectViewStyle, NSVisualEffectMaterial,
+            NSVisualEffectState,
         };
         let root = content_view(window)?;
+        crate::glass_blur::clear();
+        keep_glass_appearance_active(root, enabled);
         // Unlike Window::set_effects, these calls finish synchronously on the UI
         // thread, so material installation is complete before the panel shows.
+        clear_liquid_glass(window).map_err(|error| error.to_string())?;
         clear_vibrancy(window).map_err(|error| error.to_string())?;
         if !enabled {
             if let Some(layer) = root.layer() {
@@ -138,19 +208,35 @@ mod macos {
             window,
             NSVisualEffectMaterial::Popover,
             Some(NSVisualEffectState::Active),
-            Some(14.0),
+            Some(CARD_CORNER_RADIUS),
         )
         .map_err(|error| error.to_string())?;
+        // Clear glass supplies the highlights without the heavier material tint.
+        // The independent Gaussian pass keeps desktop detail blurred at full alpha.
+        match apply_liquid_glass(
+            window,
+            LiquidGlassOptions::new(NSGlassEffectViewStyle::Clear)
+                .radius(CARD_CORNER_RADIUS)
+                .opaque(false),
+        ) {
+            Ok(()) | Err(window_vibrancy::Error::UnsupportedPlatformVersion(_)) => {}
+            Err(error) => return Err(error.to_string()),
+        }
         let bounds = root.bounds();
         let mut found = false;
         for view in root.subviews() {
-            if view.isKindOfClass(NSVisualEffectView::class()) {
+            let is_frost = view.isKindOfClass(NSVisualEffectView::class());
+            let is_glass = is_glass_view(&view);
+            if is_glass {
+                crate::glass_blur::install(view.clone())?;
+            }
+            if is_frost || is_glass {
                 view.setFrame(NSRect::new(
                     NSPoint::new(bounds.origin.x + 6.0, bounds.origin.y + 6.0),
                     NSSize::new(bounds.size.width - 12.0, bounds.size.height - 12.0),
                 ));
                 view.setAlphaValue(1.0);
-                found = true;
+                found |= is_frost;
             }
         }
         if !found {
@@ -167,7 +253,14 @@ mod macos {
     ) -> Result<(), String> {
         let root = content_view(window)?;
         let white = CGColor::new_srgb(1.0, 1.0, 1.0, 1.0);
-        let background = CGColor::new_srgb(1.0, 1.0, 1.0, BACKGROUND_FROST_ALPHA);
+        // Native glass owns the complete backdrop in gaps; Popover frost stays
+        // under controls. Never mix an unblurred desktop copy into the gaps.
+        let background_alpha = if root.subviews().iter().any(|view| is_glass_view(&view)) {
+            0.0
+        } else {
+            BACKGROUND_FROST_ALPHA
+        };
+        let background = CGColor::new_srgb(1.0, 1.0, 1.0, background_alpha);
         for view in root.subviews() {
             if !view.isKindOfClass(NSVisualEffectView::class()) {
                 continue;
@@ -187,8 +280,7 @@ mod macos {
             // over a text pane do not accumulate a second layer of native frost.
             controls.setAllowsGroupOpacity(true);
             controls.setOpacity(
-                ((CONTROL_FROST_ALPHA - BACKGROUND_FROST_ALPHA) / (1.0 - BACKGROUND_FROST_ALPHA))
-                    as f32,
+                ((CONTROL_FROST_ALPHA - background_alpha) / (1.0 - background_alpha)) as f32,
             );
             for surface in super::material_surfaces(surfaces, bounds.size.width, bounds.size.height)
             {
@@ -247,6 +339,7 @@ mod macos {
         animated: bool,
     ) -> Result<(), String> {
         let root = content_view(window)?;
+        crate::glass_blur::set_visible(visible);
         root.setWantsLayer(true);
         let layer = root.layer().ok_or("窗口裁切图层不可用")?;
         let mask = layer.mask().unwrap_or_else(|| {
@@ -282,6 +375,10 @@ mod macos {
         mask.removeAllAnimations();
         mask.setBounds(target_bounds);
         mask.setPosition(target_position);
+        // Clip the composed backdrop too: the Gaussian filter can paint beyond
+        // the native glass view's own rounded silhouette.
+        mask.setCornerRadius(CARD_CORNER_RADIUS);
+        mask.setMasksToBounds(true);
         if animated {
             // These boxes contain the Core Animation bounds and position types.
             let (from_bounds, to_bounds, from_position, to_position) = unsafe {
