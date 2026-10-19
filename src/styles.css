@@ -479,6 +479,9 @@ body {
 .history-scroll {
   flex: 1;
   min-height: 0;
+  /* Reserve a lane outside the cards for macOS overlay scrollbars. */
+  margin-inline-end: -8px;
+  padding-inline-end: 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
   overflow-anchor: none;
@@ -880,6 +883,11 @@ body {
 :root[data-appearance="liquid_glass"] :is(#lang-a, #lang-b):hover {
   background: linear-gradient(rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0.30)),
     var(--glass-fill), linear-gradient(var(--glass-surface-tint), var(--glass-surface-tint));
+}
+:root[data-appearance="liquid_glass"] .quick-actions {
+  --muted: rgba(255, 255, 255, 0.88);
+  --fg: #fff;
+  --border: rgba(255, 255, 255, 0.16);
 }
 :root[data-appearance="liquid_glass"] #close-flyout:hover {
   background: var(--glass-close-hover);
