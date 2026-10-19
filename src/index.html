@@ -94,10 +94,14 @@
         </button>
         <h2 id="settings-title">设置</h2>
       </header>
-      <label>
-        <span id="lbl-url">模型 URL（OpenAI 格式，以 /v1 结尾）</span>
-        <input id="cfg-url" type="text" placeholder="https://api.openai.com/v1" />
-      </label>
+      <div class="settings-field">
+        <label id="lbl-url" for="cfg-url">模型 URL（OpenAI 格式，以 /v1 结尾）</label>
+        <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1" aria-describedby="cfg-model-status" />
+        <div class="connection-feedback">
+          <span id="cfg-model-status" role="status" aria-live="polite"></span>
+          <button id="cfg-model-retry" class="history-link" type="button" hidden>重试</button>
+        </div>
+      </div>
       <label>
         <span id="lbl-key">API Key</span>
         <div class="key-row">
@@ -105,10 +109,19 @@
           <button id="cfg-key-clear" class="secondary small" type="button">清除</button>
         </div>
       </label>
-      <label>
-        <span id="lbl-model">模型名称</span>
-        <input id="cfg-model" type="text" placeholder="gpt-5.5-mini" />
-      </label>
+      <div class="settings-field">
+        <label id="lbl-model" for="cfg-model">模型名称</label>
+        <div id="cfg-model-picker" class="language-picker model-picker">
+          <button id="cfg-model" class="lang-select" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cfg-model-options" aria-describedby="cfg-model-status" disabled>
+            <span id="cfg-model-label" class="language-label"></span>
+          </button>
+          <div id="cfg-model-menu" class="language-menu model-menu" hidden>
+            <input id="cfg-model-search" class="model-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="cfg-model-options" aria-expanded="false" autocomplete="off" spellcheck="false" />
+            <div id="cfg-model-options" class="model-options" role="listbox"></div>
+            <p id="cfg-model-empty" class="model-empty" role="status" aria-live="polite" hidden></p>
+          </div>
+        </div>
+      </div>
       <div class="settings-field">
         <span id="lbl-uilang">界面语言</span>
         <div id="cfg-ui-lang-picker" class="language-picker menu-up">

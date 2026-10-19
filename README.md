@@ -8,6 +8,7 @@ SimpleT 是一个轻量级桌面托盘翻译工具，基于 Tauri 构建。它�
 
 - Tray-based quick translation flyout / 托盘快速唤起翻译窗口
 - OpenAI-compatible endpoint, API key, and model settings / 支持配置兼容 OpenAI 的接口、API Key 和模型名
+- Automatic model discovery with connection feedback and a searchable, height-limited dropdown / 自动获取模型列表，显示连接状态，支持搜索及限高滚动选择
 - Bidirectional language swap / 支持源语言和目标语言互换
 - Localized UI language selection / 支持界面语言切换
 - Appearance switching between Default and Liquid Glass, applied immediately and remembered / 外观支持默认与液态玻璃，即时切换并记住选择
@@ -83,5 +84,9 @@ Open the tray menu settings and fill in:
 
 - Model URL ending with `/v1` / 以 `/v1` 结尾的模型 URL
 - API Key
-- Model name / 模型名
+- Model from the service's available-model dropdown / 从服务返回的下拉列表中选择模型
 - UI language / 界面语言
+
+After entering the API base URL and, when required, an API key, SimpleT requests `GET <base URL>/models`. The URL field shows whether the service returned a usable model list. Selection stays disabled while loading or after a connection, authentication, or response error; use Retry to check again. Long catalogs scroll in a compact dropdown and can be searched by the full model ID. Long IDs are shortened visually, with the full ID available on hover. A saved model remains selected when it is still listed; otherwise choose a replacement explicitly. Discovery does not save settings. This uses the model-list format documented by [OpenAI](https://developers.openai.com/api/reference/resources/models/methods/list) and [OpenRouter](https://openrouter.ai/docs/api/api-reference/models/get-models).
+
+填写 API 基础 URL 及服务所需的 API Key 后，SimpleT 会请求 `GET <基础 URL>/models`，在 URL 下方显示连接及模型获取状态。加载中、连接或认证失败、响应无效时，模型选择保持禁用，可点击“重试”重新获取。下拉列表限制高度并支持按完整模型 ID 搜索；过长名称显示省略号，悬停可查看完整内容。已保存的模型仍在列表中时会保留，否则需要重新选择。获取列表不会自动保存设置。已保存的 Key 仅用于原来的 API 地址，改用其他服务时应填写对应的 Key。

@@ -83,14 +83,17 @@ async function createApp(config = {}, options = {}) {
     return elements.get(selector);
   }
 
-  for (const id of ["lang-a", "lang-b", "cfg-ui-lang", "cfg-appearance"]) {
+  for (const id of ["lang-a", "lang-b", "cfg-ui-lang", "cfg-appearance", "cfg-model"]) {
     element(`#${id}-picker`).appendChild(element(`#${id}`));
     element(`#${id}-picker`).appendChild(element(`#${id}-menu`));
     element(`#${id}`).appendChild(element(`#${id}-label`));
   }
+  for (const id of ["cfg-model-search", "cfg-model-options", "cfg-model-empty"]) {
+    element("#cfg-model-menu").appendChild(element(`#${id}`));
+  }
   for (const [page, ids] of [
     ["translate", ["input", "output", "lang-a-picker", "lang-b-picker", "swap", "translate-btn", "open-settings", "open-history"]],
-    ["settings", ["cfg-back", "cfg-url", "cfg-key", "cfg-model", "cfg-ui-lang-picker", "cfg-appearance-picker", "cfg-key-clear", "cfg-save"]],
+    ["settings", ["cfg-back", "cfg-url", "cfg-key", "cfg-model-picker", "cfg-model-status", "cfg-model-retry", "cfg-ui-lang-picker", "cfg-appearance-picker", "cfg-key-clear", "cfg-save"]],
     ["history", ["history-back", "history-scroll"]],
   ]) {
     element(".card").appendChild(element(`#page-${page}`));
@@ -112,6 +115,7 @@ async function createApp(config = {}, options = {}) {
             lang_a: "English", lang_b: "Chinese", ui_lang: "zh",
             api_key_configured: true, ...config,
           };
+          if (command === "list_models") return [config.model || "test-model", "new-model"];
           if (command === "translate") return new Promise((resolve, reject) => {
             requests.push({ args, resolve, reject });
           });
@@ -148,6 +152,7 @@ async function createApp(config = {}, options = {}) {
     setTimeout(handler) { const id = nextTimer++; timers.set(id, handler); return id; },
     clearTimeout(id) { timers.delete(id); },
     Intl,
+    URL,
   };
   vm.createContext(context);
   vm.runInContext(source, context);
@@ -1122,6 +1127,12 @@ test("controls remain usable after a configuration load failure", async () => {
   } });
   assert.ok(app.commands.some(({ command }) => command === "frontend_ready"));
   assert.match(app.element("#status").textContent, /load failed/);
+  app.element("#cfg-url").value = "https://example.com/v1";
+  app.element("#cfg-url").dispatch("input");
+  await app.element("#cfg-url").dispatch("change");
+  app.element("#cfg-model").dispatch("click");
+  app.element("#cfg-model-options").children[0].dispatch("click");
+  assert.match(app.element("#cfg-status").textContent, /load failed/);
   await app.element("#cfg-save").dispatch("click");
   assert.ok(app.commands.some(({ command }) => command === "save_config"));
 });
@@ -1236,4 +1247,207 @@ test("a Saved status timer cannot erase a later autosave error", async () => {
   await app.element("#cfg-ui-lang").dispatch("change");
   app.runTimer(savedTimer);
   assert.match(app.element("#cfg-status").textContent, /autosave failed/);
+});
+
+async function editModelUrl(app, url) {
+  app.element("#cfg-url").value = url;
+  app.element("#cfg-url").dispatch("input");
+  await app.element("#cfg-url").dispatch("change");
+}
+
+test("model discovery does not delay startup and restores a listed saved model", async () => {
+  const pending = deferred();
+  const app = await createApp({ model: "provider/saved" }, {
+    invoke: { list_models: () => pending.promise },
+  });
+  assert.ok(app.commands.some(({ command }) => command === "frontend_ready"));
+  assert.equal(app.element("#cfg-model").disabled, true);
+  assert.equal(app.element("#cfg-model-label").textContent, "provider/saved");
+  assert.match(app.element("#cfg-model-status").textContent, /正在检查/);
+  pending.resolve(["provider/first", "provider/saved"]);
+  await flushPromises();
+  assert.equal(app.element("#cfg-model").disabled, false);
+  assert.equal(app.element("#cfg-model").value, "provider/saved");
+  assert.match(app.element("#cfg-model-status").textContent, /服务可用.*2/);
+  assert.equal(app.element("#cfg-model-options").children[1].getAttribute("aria-selected"), "true");
+  assert.equal(app.element("#cfg-key").value, "");
+});
+
+for (const url of ["", "not a URL", "file:///tmp/models", "https://user:secret@example.com/v1", "https://example.com/v1?key=secret"]) {
+  test(`an unusable model URL disables selection without a request: ${url}`, async () => {
+    const app = await createApp({ base_url: url, model: "" });
+    assert.equal(app.commands.some(({ command }) => command === "list_models"), false);
+    assert.equal(app.element("#cfg-model").disabled, true);
+    app.element("#cfg-model").dispatch("click");
+    assert.equal(app.element("#cfg-model-menu").hidden, true);
+    await app.element("#cfg-save").dispatch("click");
+    assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+  });
+}
+
+test("URL edits immediately invalidate choices and debounce discovery to the latest address", async () => {
+  const app = await createApp();
+  app.element("#cfg-model").dispatch("click");
+  for (const url of ["https://first.example/v1", "https://latest.example/api/v1"]) {
+    app.element("#cfg-url").value = url;
+    app.element("#cfg-url").dispatch("input");
+  }
+  assert.equal(app.element("#cfg-model").value, "");
+  assert.equal(app.element("#cfg-model").disabled, true);
+  assert.equal(app.element("#cfg-model-menu").hidden, true);
+  assert.equal(app.commands.filter(({ command }) => command === "list_models").length, 1);
+  assert.equal(app.timers.size, 1);
+  await app.runTimer([...app.timers.keys()][0]);
+  const calls = app.commands.filter(({ command }) => command === "list_models");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].args.baseUrl, "https://latest.example/api/v1");
+  assert.equal(app.element("#cfg-model").disabled, false);
+  assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+});
+
+for (const outcome of ["success", "failure"]) {
+  test(`an obsolete catalog ${outcome} cannot overwrite the current endpoint`, async () => {
+    const old = deferred();
+    const app = await createApp({}, { invoke: { list_models: ({ baseUrl }) => {
+      if (baseUrl.includes("old.example")) return old.promise;
+      return [baseUrl.includes("new.example") ? "new/model" : "test-model"];
+    } } });
+    const oldRequest = editModelUrl(app, "https://old.example/v1");
+    await editModelUrl(app, "https://new.example/v1");
+    old.resolve(outcome === "success" ? ["old/model"] : Promise.reject({ code: "http", status: 401 }));
+    await oldRequest;
+    assert.equal(app.element("#cfg-model").disabled, false);
+    assert.equal(app.element("#cfg-model-options").children[0].children[1].textContent, "new/model");
+    assert.match(app.element("#cfg-model-status").textContent, /服务可用/);
+  });
+}
+
+for (const [error, message] of [
+  [{ code: "http", status: 401 }, /认证失败/],
+  [{ code: "http", status: 403 }, /认证失败/],
+  [{ code: "http", status: 404 }, /HTTP 404/],
+  [{ code: "network" }, /无法连接/],
+  [{ code: "timeout" }, /连接超时/],
+  [{ code: "invalid_response" }, /有效的模型列表/],
+  [{ code: "empty" }, /未提供可用模型/],
+]) {
+  test(`a model discovery failure disables the list and can be retried: ${JSON.stringify(error)}`, async () => {
+    let fail = true;
+    const app = await createApp({}, { invoke: { list_models: () => {
+      if (fail) throw error;
+      return ["test-model"];
+    } } });
+    assert.equal(app.element("#cfg-model").disabled, true);
+    assert.equal(app.element("#cfg-model").value, "test-model");
+    assert.match(app.element("#cfg-model-status").textContent, message);
+    assert.equal(app.element("#cfg-model-retry").hidden, false);
+    fail = false;
+    await app.element("#cfg-model-retry").dispatch("click");
+    assert.equal(app.element("#cfg-model").disabled, false);
+    assert.equal(app.element("#cfg-model-retry").hidden, true);
+  });
+}
+
+test("a missing saved model requires an explicit selection instead of silently changing models", async () => {
+  const app = await createApp({}, { invoke: { list_models: () => ["replacement/model"] } });
+  assert.equal(app.element("#cfg-model").value, "");
+  assert.equal(app.element("#cfg-model-label").textContent, "请选择模型");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+  app.element("#cfg-model").dispatch("click");
+  app.element("#cfg-model-options").children[0].dispatch("click");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.model, "replacement/model");
+});
+
+test("a large catalog searches full IDs, renders them literally, and saves the exact choice", async () => {
+  const longId = `provider/${"long-model-".repeat(30)}<literal>:free`;
+  const models = Array.from({ length: 650 }, (_, i) => `provider/model-${i}`);
+  const app = await createApp({}, { invoke: { list_models: () => [...models, longId] } });
+  app.element("#cfg-model").dispatch("click");
+  const search = app.element("#cfg-model-search");
+  assert.equal(search.focused, true);
+  assert.equal(app.element("#cfg-model-options").children.length, 651);
+  search.value = "LONG-model-";
+  search.dispatch("input");
+  const options = app.element("#cfg-model-options").children;
+  assert.equal(options.length, 1);
+  assert.equal(options[0].children[1].textContent, longId);
+  assert.equal(options[0].children[1].title, longId);
+  assert.equal(options[0].children[1].children.length, 0);
+  search.dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#cfg-model").value, longId);
+  assert.equal(app.element("#cfg-model-label").title, longId);
+  assert.equal(app.element("#cfg-model-menu").hidden, true);
+  assert.equal(app.commands.some(({ command }) => command === "save_config"), false);
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.model, longId);
+});
+
+test("model search respects IME and empty results, and Escape closes only the dropdown first", async () => {
+  const app = await createApp();
+  app.element("#cfg-model").dispatch("click");
+  const search = app.element("#cfg-model-search");
+  search.value = "no-such-model";
+  search.dispatch("input");
+  assert.equal(app.element("#cfg-model-empty").hidden, false);
+  assert.equal(search.getAttribute("aria-activedescendant"), undefined);
+  search.dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#cfg-model-menu").hidden, false);
+  search.value = "new-model";
+  search.dispatch("input");
+  search.dispatch("keydown", { key: "Enter", isComposing: true });
+  assert.equal(app.element("#cfg-model").value, "test-model");
+  app.keydown({ key: "Escape" });
+  assert.equal(app.element("#cfg-model-menu").hidden, true);
+  assert.equal(app.commands.some(({ command }) => command === "request_hide"), false);
+  app.keydown({ key: "Escape" });
+  assert.equal(app.commands.some(({ command }) => command === "request_hide"), true);
+});
+
+test("API key edits refresh discovery with the draft and clearing never reuses a saved key", async () => {
+  const app = await createApp();
+  app.element("#cfg-key").value = "draft-key";
+  app.element("#cfg-key").dispatch("input");
+  assert.equal(app.element("#cfg-model").disabled, true);
+  await app.element("#cfg-key").dispatch("change");
+  assert.equal(app.commands.filter(({ command }) => command === "list_models").at(-1).args.apiKey, "draft-key");
+  await app.element("#cfg-key-clear").dispatch("click");
+  await flushPromises();
+  assert.equal(app.commands.filter(({ command }) => command === "list_models").at(-1).args.apiKey, "");
+  assert.equal(app.element("#cfg-key").value, "");
+});
+
+test("moving to another public service does not carry the previous provider's saved key into a full save", async () => {
+  const app = await createApp();
+  await editModelUrl(app, "https://other.example/api/v1");
+  assert.equal(app.element("#cfg-key").placeholder, "sk-…");
+  app.element("#cfg-model").dispatch("click");
+  app.element("#cfg-model-options").children[0].dispatch("click");
+  await app.element("#cfg-save").dispatch("click");
+  assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.api_key, "");
+});
+
+test("model messages follow the UI locale without discarding the selection or refetching", async () => {
+  const app = await createApp();
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.match(app.element("#cfg-model-status").textContent, /Service available/);
+  assert.equal(app.element("#cfg-model-search").placeholder, "Search models…");
+  assert.equal(app.element("#cfg-model").value, "test-model");
+  assert.equal(app.commands.filter(({ command }) => command === "list_models").length, 1);
+});
+
+test("reopening model search with End navigates the whole catalog after filtering", async () => {
+  const app = await createApp();
+  app.element("#cfg-model").dispatch("click");
+  app.element("#cfg-model-search").value = "test-model";
+  app.element("#cfg-model-search").dispatch("input");
+  app.keydown({ key: "Escape" });
+  app.element("#cfg-model").dispatch("keydown", { key: "End" });
+  const options = app.element("#cfg-model-options").children;
+  assert.equal(options.length, 2);
+  assert.equal(app.element("#cfg-model-search").getAttribute("aria-activedescendant"), options[1].id);
+  app.element("#cfg-model-search").dispatch("keydown", { key: "Enter" });
+  assert.equal(app.element("#cfg-model").value, "new-model");
 });

@@ -8,6 +8,7 @@ use std::{
 
 mod glass;
 mod history;
+mod models;
 use history::{HistoryPage, HistoryStore};
 
 #[cfg(target_os = "macos")]
@@ -532,6 +533,22 @@ fn load_config(app: tauri::AppHandle) -> ConfigView {
         .lock()
         .map(|config| config.view())
         .unwrap_or_else(|_| ConfigState::new(Err("配置状态不可用".into())).view())
+}
+
+#[tauri::command]
+async fn list_models(
+    app: tauri::AppHandle,
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<Vec<String>, models::ModelsError> {
+    let saved = config_snapshot(&app);
+    models::list_models(
+        &base_url,
+        api_key.as_deref(),
+        &saved.base_url,
+        &saved.api_key,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1442,6 +1459,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             load_config,
+            list_models,
             save_config,
             save_ui_lang,
             save_appearance,

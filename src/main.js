@@ -57,6 +57,20 @@ const I18N = {
     urlLabel: "模型 URL（OpenAI 格式，以 /v1 结尾）",
     keyLabel: "API Key",
     modelLabel: "模型名称",
+    modelsIdle: "填写服务 URL 后获取可用模型",
+    modelsInvalidUrl: "请输入有效的 HTTP / HTTPS 服务 URL",
+    modelsLoading: "正在检查服务并获取模型…",
+    modelsReady: "服务可用 · {count} 个模型",
+    modelsAuth: "认证失败，请检查 API Key",
+    modelsNetwork: "无法连接服务，请检查 URL 或网络",
+    modelsTimeout: "连接超时，请重试",
+    modelsHttp: "获取模型失败（HTTP {status}）",
+    modelsInvalidResponse: "服务未返回有效的模型列表",
+    modelsEmpty: "服务可连接，但未提供可用模型",
+    modelConnect: "连接服务后选择模型",
+    modelSelect: "请选择模型",
+    modelSearch: "搜索模型…",
+    modelsNoMatch: "没有匹配的模型",
     uiLangLabel: "界面语言",
     clearKey: "清除",
     save: "保存",
@@ -98,6 +112,20 @@ const I18N = {
     urlLabel: "Model URL (OpenAI format, ends with /v1)",
     keyLabel: "API Key",
     modelLabel: "Model name",
+    modelsIdle: "Enter a service URL to load available models",
+    modelsInvalidUrl: "Enter a valid HTTP / HTTPS service URL",
+    modelsLoading: "Checking the service and loading models…",
+    modelsReady: "Service available · {count} models",
+    modelsAuth: "Authentication failed. Check your API key",
+    modelsNetwork: "Cannot connect. Check the URL or network",
+    modelsTimeout: "Connection timed out. Please retry",
+    modelsHttp: "Unable to load models (HTTP {status})",
+    modelsInvalidResponse: "The service did not return a valid model list",
+    modelsEmpty: "Service connected, but no models are available",
+    modelConnect: "Connect to select a model",
+    modelSelect: "Select a model",
+    modelSearch: "Search models…",
+    modelsNoMatch: "No matching models",
     uiLangLabel: "UI language",
     clearKey: "Clear",
     save: "Save",
@@ -139,6 +167,20 @@ const I18N = {
     urlLabel: "モデル URL（OpenAI 形式、/v1 で終わる）",
     keyLabel: "API キー",
     modelLabel: "モデル名",
+    modelsIdle: "サービス URL を入力するとモデルを取得します",
+    modelsInvalidUrl: "有効な HTTP / HTTPS URL を入力してください",
+    modelsLoading: "サービスを確認してモデルを取得中…",
+    modelsReady: "接続可能 · {count} モデル",
+    modelsAuth: "認証に失敗しました。API キーを確認してください",
+    modelsNetwork: "接続できません。URL やネットワークを確認してください",
+    modelsTimeout: "接続がタイムアウトしました。再試行してください",
+    modelsHttp: "モデルを取得できません（HTTP {status}）",
+    modelsInvalidResponse: "有効なモデル一覧が返されませんでした",
+    modelsEmpty: "接続できましたが、利用可能なモデルがありません",
+    modelConnect: "接続後にモデルを選択",
+    modelSelect: "モデルを選択",
+    modelSearch: "モデルを検索…",
+    modelsNoMatch: "該当するモデルがありません",
     uiLangLabel: "表示言語",
     clearKey: "消去",
     save: "保存",
@@ -180,6 +222,20 @@ const I18N = {
     urlLabel: "모델 URL (OpenAI 형식, /v1로 끝남)",
     keyLabel: "API 키",
     modelLabel: "모델 이름",
+    modelsIdle: "서비스 URL을 입력하면 모델을 불러옵니다",
+    modelsInvalidUrl: "유효한 HTTP / HTTPS URL을 입력하세요",
+    modelsLoading: "서비스 확인 및 모델 불러오는 중…",
+    modelsReady: "서비스 사용 가능 · 모델 {count}개",
+    modelsAuth: "인증에 실패했습니다. API 키를 확인하세요",
+    modelsNetwork: "연결할 수 없습니다. URL 또는 네트워크를 확인하세요",
+    modelsTimeout: "연결 시간이 초과되었습니다. 다시 시도하세요",
+    modelsHttp: "모델을 불러올 수 없습니다 (HTTP {status})",
+    modelsInvalidResponse: "유효한 모델 목록이 반환되지 않았습니다",
+    modelsEmpty: "연결되었으나 사용 가능한 모델이 없습니다",
+    modelConnect: "연결 후 모델 선택",
+    modelSelect: "모델 선택",
+    modelSearch: "모델 검색…",
+    modelsNoMatch: "일치하는 모델이 없습니다",
     uiLangLabel: "인터페이스 언어",
     clearKey: "지우기",
     save: "저장",
@@ -221,6 +277,20 @@ const I18N = {
     urlLabel: "URL du modèle (format OpenAI, se termine par /v1)",
     keyLabel: "Clé API",
     modelLabel: "Nom du modèle",
+    modelsIdle: "Saisissez l’URL du service pour charger les modèles",
+    modelsInvalidUrl: "Saisissez une URL HTTP / HTTPS valide",
+    modelsLoading: "Vérification du service et chargement des modèles…",
+    modelsReady: "Service disponible · {count} modèles",
+    modelsAuth: "Échec de l’authentification. Vérifiez la clé API",
+    modelsNetwork: "Connexion impossible. Vérifiez l’URL ou le réseau",
+    modelsTimeout: "Délai de connexion dépassé. Réessayez",
+    modelsHttp: "Chargement des modèles impossible (HTTP {status})",
+    modelsInvalidResponse: "Le service n’a pas renvoyé de liste de modèles valide",
+    modelsEmpty: "Service connecté, mais aucun modèle disponible",
+    modelConnect: "Connectez-vous pour choisir un modèle",
+    modelSelect: "Choisir un modèle",
+    modelSearch: "Rechercher un modèle…",
+    modelsNoMatch: "Aucun modèle correspondant",
     uiLangLabel: "Langue de l'interface",
     clearKey: "Effacer",
     save: "Enregistrer",
@@ -262,6 +332,20 @@ const I18N = {
     urlLabel: "Modell-URL (OpenAI-Format, endet mit /v1)",
     keyLabel: "API-Schlüssel",
     modelLabel: "Modellname",
+    modelsIdle: "Service-URL eingeben, um Modelle zu laden",
+    modelsInvalidUrl: "Eine gültige HTTP-/HTTPS-URL eingeben",
+    modelsLoading: "Service wird geprüft, Modelle werden geladen…",
+    modelsReady: "Service verfügbar · {count} Modelle",
+    modelsAuth: "Authentifizierung fehlgeschlagen. API-Schlüssel prüfen",
+    modelsNetwork: "Keine Verbindung. URL oder Netzwerk prüfen",
+    modelsTimeout: "Zeitüberschreitung. Bitte erneut versuchen",
+    modelsHttp: "Modelle konnten nicht geladen werden (HTTP {status})",
+    modelsInvalidResponse: "Der Service lieferte keine gültige Modellliste",
+    modelsEmpty: "Service verbunden, aber keine Modelle verfügbar",
+    modelConnect: "Verbinden, um ein Modell auszuwählen",
+    modelSelect: "Modell auswählen",
+    modelSearch: "Modelle suchen…",
+    modelsNoMatch: "Keine passenden Modelle",
     uiLangLabel: "Anzeigesprache",
     clearKey: "Löschen",
     save: "Speichern",
@@ -303,6 +387,20 @@ const I18N = {
     urlLabel: "URL del modelo (formato OpenAI, termina en /v1)",
     keyLabel: "Clave API",
     modelLabel: "Nombre del modelo",
+    modelsIdle: "Introduce la URL del servicio para cargar los modelos",
+    modelsInvalidUrl: "Introduce una URL HTTP / HTTPS válida",
+    modelsLoading: "Comprobando el servicio y cargando modelos…",
+    modelsReady: "Servicio disponible · {count} modelos",
+    modelsAuth: "Error de autenticación. Comprueba la clave API",
+    modelsNetwork: "No se puede conectar. Comprueba la URL o la red",
+    modelsTimeout: "Tiempo de conexión agotado. Inténtalo de nuevo",
+    modelsHttp: "No se pudieron cargar los modelos (HTTP {status})",
+    modelsInvalidResponse: "El servicio no devolvió una lista de modelos válida",
+    modelsEmpty: "Servicio conectado, pero no hay modelos disponibles",
+    modelConnect: "Conecta para elegir un modelo",
+    modelSelect: "Elegir un modelo",
+    modelSearch: "Buscar modelos…",
+    modelsNoMatch: "No hay modelos coincidentes",
     uiLangLabel: "Idioma de la interfaz",
     clearKey: "Borrar",
     save: "Guardar",
@@ -344,6 +442,20 @@ const I18N = {
     urlLabel: "URL модели (формат OpenAI, оканчивается на /v1)",
     keyLabel: "API-ключ",
     modelLabel: "Название модели",
+    modelsIdle: "Введите URL сервиса для загрузки моделей",
+    modelsInvalidUrl: "Введите корректный HTTP / HTTPS URL",
+    modelsLoading: "Проверка сервиса и загрузка моделей…",
+    modelsReady: "Сервис доступен · моделей: {count}",
+    modelsAuth: "Ошибка авторизации. Проверьте API-ключ",
+    modelsNetwork: "Нет подключения. Проверьте URL или сеть",
+    modelsTimeout: "Время подключения истекло. Повторите попытку",
+    modelsHttp: "Не удалось загрузить модели (HTTP {status})",
+    modelsInvalidResponse: "Сервис не вернул корректный список моделей",
+    modelsEmpty: "Подключено, но доступных моделей нет",
+    modelConnect: "Подключитесь для выбора модели",
+    modelSelect: "Выберите модель",
+    modelSearch: "Поиск моделей…",
+    modelsNoMatch: "Подходящих моделей нет",
     uiLangLabel: "Язык интерфейса",
     clearKey: "Очистить",
     save: "Сохранить",
@@ -358,6 +470,13 @@ let currentLang = "zh";
 let els = {};
 let languagePickers = [];
 let openLanguagePicker = null;
+let modelPicker = null;
+let modelCatalogState = "idle";
+let modelCatalogError = null;
+let modelRequestVersion = 0;
+let modelFetchTimer = null;
+let configuredBaseUrl = "";
+let modelDraftUrl = null;
 const UI_LANGUAGES = Object.entries(I18N).map(([code, dict]) => ({ value: code, code, label: dict._name }));
 const APPEARANCES = [
   { value: "default", labelKey: "appearanceDefault" },
@@ -409,6 +528,7 @@ function applyLocale(lang) {
   // A(B) 中的 A 随界面语言变化，重建两个语种列表并保留已选值。
   closeLanguagePicker();
   languagePickers.forEach(renderLanguagePicker);
+  updateModelCatalogUI();
 }
 
 // 某语言在指定区域设置下的显示名（失败则回退到代码本身）
@@ -434,21 +554,26 @@ function languageChoiceLabel(language) {
 
 function syncLanguagePicker(picker) {
   const selected = picker.items.findIndex((lang) => lang.value === picker.trigger.value);
-  picker.label.textContent = languageChoiceLabel(picker.items[selected]);
+  picker.label.textContent = selected >= 0 ? languageChoiceLabel(picker.items[selected])
+    : picker.allowUnknownValue && picker.trigger.value ? picker.trigger.value
+    : t(modelCatalogState === "ready" ? "modelSelect" : "modelConnect");
+  picker.label.title = picker.label.textContent;
   picker.trigger.setAttribute("aria-label", `${t(picker.labelKey)}: ${picker.label.textContent}`);
-  picker.menu.setAttribute("aria-label", t(picker.labelKey));
+  (picker.list || picker.menu).setAttribute("aria-label", t(picker.labelKey));
   picker.options.forEach((option, index) => {
-    option.setAttribute("aria-selected", String(index === selected));
+    option.setAttribute("aria-selected", String(picker.visibleItems[index].value === picker.trigger.value));
   });
 }
 
 function renderLanguagePicker(picker) {
-  if (!picker.items.some((lang) => lang.value === picker.trigger.value)) {
+  if (!picker.allowUnknownValue && !picker.items.some((lang) => lang.value === picker.trigger.value)) {
     picker.trigger.value = picker.defaultValue;
   }
-  picker.options = picker.items.map((lang, index) => {
+  const query = picker.searchInput?.value.trim().toLocaleLowerCase(currentLang) || "";
+  picker.visibleItems = picker.items.filter((item) => languageChoiceLabel(item).toLocaleLowerCase(currentLang).includes(query));
+  picker.options = picker.visibleItems.map((lang, index) => {
     const option = document.createElement("div");
-    option.id = `${picker.trigger.id}-option-${lang.code || lang.value}`;
+    option.id = `${picker.trigger.id}-option-${picker.searchInput ? index : lang.code || lang.value}`;
     option.className = "language-option";
     option.setAttribute("role", "option");
     const check = document.createElement("span");
@@ -456,28 +581,39 @@ function renderLanguagePicker(picker) {
     check.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.textContent = languageChoiceLabel(lang);
+    label.title = label.textContent;
     option.appendChild(check);
     option.appendChild(label);
     option.addEventListener("pointermove", () => activateLanguageOption(picker, index, false));
     option.addEventListener("click", () => chooseLanguage(picker, index));
     return option;
   });
-  picker.menu.replaceChildren(...picker.options);
+  (picker.list || picker.menu).replaceChildren(...picker.options);
+  if (picker.empty) picker.empty.hidden = picker.options.length > 0;
   syncLanguagePicker(picker);
 }
 
 function activateLanguageOption(picker, index, scroll = true) {
+  if (!picker.options.length) {
+    picker.activeIndex = -1;
+    picker.trigger.removeAttribute("aria-activedescendant");
+    picker.searchInput?.removeAttribute("aria-activedescendant");
+    return;
+  }
+  index = Math.max(0, Math.min(picker.options.length - 1, index));
   picker.activeIndex = index;
   picker.options.forEach((option, i) => option.classList.toggle("is-active", i === index));
   const option = picker.options[index];
   picker.trigger.setAttribute("aria-activedescendant", option.id);
+  picker.searchInput?.setAttribute("aria-activedescendant", option.id);
   if (!scroll) return;
   // Scroll only the list, so keyboard navigation cannot move the flyout itself.
   const top = option.offsetTop;
   const bottom = top + option.offsetHeight;
-  if (top < picker.menu.scrollTop) picker.menu.scrollTop = top;
-  else if (bottom > picker.menu.scrollTop + picker.menu.clientHeight) {
-    picker.menu.scrollTop = bottom - picker.menu.clientHeight;
+  const list = picker.list || picker.menu;
+  if (top < list.scrollTop) list.scrollTop = top;
+  else if (bottom > list.scrollTop + list.clientHeight) {
+    list.scrollTop = bottom - list.clientHeight;
   }
 }
 
@@ -488,23 +624,32 @@ function closeLanguagePicker(restoreFocus = false) {
   picker.menu.hidden = true;
   picker.trigger.setAttribute("aria-expanded", "false");
   picker.trigger.removeAttribute("aria-activedescendant");
+  picker.searchInput?.setAttribute("aria-expanded", "false");
+  picker.searchInput?.removeAttribute("aria-activedescendant");
   if (restoreFocus) picker.trigger.focus();
   return true;
 }
 
 function showLanguagePicker(picker, index) {
+  if (picker.trigger.disabled || !picker.items.length) return;
   closeLanguagePicker();
   openLanguagePicker = picker;
   picker.search = "";
   picker.searchTime = 0;
+  if (picker.searchInput) {
+    picker.searchInput.value = "";
+    renderLanguagePicker(picker);
+    picker.searchInput.setAttribute("aria-expanded", "true");
+  }
   picker.menu.hidden = false;
   picker.trigger.setAttribute("aria-expanded", "true");
-  picker.trigger.focus();
-  activateLanguageOption(picker, index ?? picker.items.findIndex((lang) => lang.value === picker.trigger.value));
+  (picker.searchInput || picker.trigger).focus();
+  activateLanguageOption(picker, index ?? picker.visibleItems.findIndex((lang) => lang.value === picker.trigger.value));
 }
 
 function chooseLanguage(picker, index) {
-  const value = picker.items[index].value;
+  if (picker.trigger.disabled || !picker.visibleItems[index]) return;
+  const value = picker.visibleItems[index].value;
   const changed = picker.trigger.value !== value;
   picker.trigger.value = value;
   syncLanguagePicker(picker);
@@ -513,8 +658,9 @@ function chooseLanguage(picker, index) {
 }
 
 function onLanguageKeydown(picker, event) {
-  if (event.isComposing || event.keyCode === 229) return;
+  if (event.isComposing || event.keyCode === 229 || picker.trigger.disabled) return;
   const expanded = openLanguagePicker === picker;
+  if (event.target === picker.searchInput && !["Enter", "ArrowDown", "ArrowUp", "Tab"].includes(event.key)) return;
   if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
     event.preventDefault();
     if (!expanded) {
@@ -522,8 +668,8 @@ function onLanguageKeydown(picker, event) {
     } else if (event.key === "Enter" || event.key === " ") {
       return chooseLanguage(picker, picker.activeIndex);
     } else {
-      const index = event.key === "Home" ? 0 : event.key === "End" ? picker.items.length - 1
-        : Math.max(0, Math.min(picker.items.length - 1, picker.activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
+      const index = event.key === "Home" ? 0 : event.key === "End" ? picker.visibleItems.length - 1
+        : Math.max(0, Math.min(picker.visibleItems.length - 1, picker.activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
       activateLanguageOption(picker, index);
     }
   } else if (event.key === "Tab") {
@@ -531,6 +677,12 @@ function onLanguageKeydown(picker, event) {
   } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     if (!expanded) showLanguagePicker(picker);
+    if (picker.searchInput) {
+      picker.searchInput.value = event.key;
+      renderLanguagePicker(picker);
+      activateLanguageOption(picker, 0);
+      return;
+    }
     const now = Date.now();
     const key = event.key.toLocaleLowerCase(currentLang);
     picker.search = (now - picker.searchTime < 700 ? picker.search : "") + key;
@@ -553,13 +705,14 @@ function onLanguageKeydown(picker, event) {
   }
 }
 
-function createLanguagePicker(id, labelKey, defaultValue, items = LANGUAGES, onChange = persistLangs) {
+function createLanguagePicker(id, labelKey, defaultValue, items = LANGUAGES, onChange = persistLangs, extra = {}) {
   const picker = {
     root: document.querySelector(`#${id}-picker`),
     trigger: document.querySelector(`#${id}`),
     label: document.querySelector(`#${id}-label`),
     menu: document.querySelector(`#${id}-menu`),
-    labelKey, defaultValue, items, onChange, options: [], activeIndex: 0, search: "", searchTime: 0,
+    labelKey, defaultValue, items, onChange, options: [], visibleItems: [], activeIndex: 0, search: "", searchTime: 0,
+    ...extra,
   };
   picker.menu.hidden = true;
   picker.trigger.setAttribute("aria-expanded", "false");
@@ -568,7 +721,107 @@ function createLanguagePicker(id, labelKey, defaultValue, items = LANGUAGES, onC
     else showLanguagePicker(picker);
   });
   picker.trigger.addEventListener("keydown", (event) => onLanguageKeydown(picker, event));
+  if (picker.searchInput) {
+    picker.searchInput.addEventListener("input", () => {
+      renderLanguagePicker(picker);
+      activateLanguageOption(picker, 0);
+    });
+    picker.searchInput.addEventListener("keydown", (event) => onLanguageKeydown(picker, event));
+  }
   return picker;
+}
+
+function normalizeModelUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname
+      || url.username || url.password || url.search || url.hash) return null;
+    return url.href.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function sameConfiguredEndpoint() {
+  const url = normalizeModelUrl(els.cfgUrl.value);
+  return url !== null && url === normalizeModelUrl(configuredBaseUrl);
+}
+
+function updateModelCatalogUI() {
+  if (!modelPicker) return;
+  const code = modelCatalogError?.code;
+  const messageKey = modelCatalogState === "idle" ? "modelsIdle"
+    : modelCatalogState === "loading" ? "modelsLoading"
+    : modelCatalogState === "ready" ? "modelsReady"
+    : code === "invalid_url" ? "modelsInvalidUrl"
+    : code === "empty" ? "modelsEmpty"
+    : code === "timeout" ? "modelsTimeout"
+    : code === "http" && [401, 403].includes(modelCatalogError.status) ? "modelsAuth"
+    : code === "http" ? "modelsHttp"
+    : code === "invalid_response" ? "modelsInvalidResponse" : "modelsNetwork";
+  els.modelStatus.textContent = t(messageKey).replace("{count}", modelPicker.items.length)
+    .replace("{status}", modelCatalogError?.status || "");
+  els.modelStatus.title = els.modelStatus.textContent;
+  els.modelStatus.setAttribute("data-state", modelCatalogState);
+  els.modelRetry.textContent = t("retry");
+  els.modelRetry.hidden = modelCatalogState !== "error" || code === "invalid_url";
+  els.cfgUrl.setAttribute("aria-invalid", String(code === "invalid_url"));
+  modelPicker.trigger.disabled = modelCatalogState !== "ready";
+  modelPicker.trigger.setAttribute("aria-busy", String(modelCatalogState === "loading"));
+  modelPicker.searchInput.placeholder = t("modelSearch");
+  modelPicker.searchInput.setAttribute("aria-label", t("modelSearch"));
+  modelPicker.empty.textContent = t("modelsNoMatch");
+  syncLanguagePicker(modelPicker);
+}
+
+async function fetchModelCatalog(version) {
+  try {
+    const models = await invoke("list_models", {
+      baseUrl: els.cfgUrl.value.trim(),
+      apiKey: apiKeyChanged ? els.cfgKey.value.trim() : null,
+    });
+    if (version !== modelRequestVersion) return;
+    if (!Array.isArray(models) || models.some((id) => typeof id !== "string" || !id.trim())) {
+      throw { code: "invalid_response" };
+    }
+    if (!models.length) throw { code: "empty" };
+    modelPicker.items = [...new Set(models)].map((value) => ({ value, label: value }));
+    if (!modelPicker.items.some((item) => item.value === modelPicker.trigger.value)) {
+      modelPicker.trigger.value = "";
+    }
+    modelCatalogState = "ready";
+    modelCatalogError = null;
+  } catch (error) {
+    if (version !== modelRequestVersion) return;
+    modelCatalogState = "error";
+    modelCatalogError = error;
+    modelPicker.items = [];
+  }
+  renderLanguagePicker(modelPicker);
+  updateModelCatalogUI();
+}
+
+function refreshModelCatalog(delay = 450) {
+  const version = ++modelRequestVersion;
+  clearTimeout(modelFetchTimer);
+  modelFetchTimer = null;
+  if (openLanguagePicker === modelPicker) closeLanguagePicker();
+  modelPicker.items = [];
+  renderLanguagePicker(modelPicker);
+  modelCatalogError = null;
+  const rawUrl = els.cfgUrl.value.trim();
+  if (!rawUrl) modelCatalogState = "idle";
+  else if (!normalizeModelUrl(rawUrl)) {
+    modelCatalogState = "error";
+    modelCatalogError = { code: "invalid_url" };
+  } else modelCatalogState = "loading";
+  updateModelCatalogUI();
+  if (modelCatalogState !== "loading") return;
+  if (!delay) return fetchModelCatalog(version);
+  modelFetchTimer = setTimeout(() => {
+    modelFetchTimer = null;
+    return fetchModelCatalog(version);
+  }, delay);
 }
 
 // 收起动画时长，需与 styles.css 中 .card 的 transition 时长保持一致
@@ -838,8 +1091,9 @@ function clearOutput() {
 }
 
 function updateApiKeyUI() {
-  els.cfgKey.placeholder = !apiKeyChanged && apiKeyConfigured ? "••••••••" : "sk-…";
-  const hasKey = apiKeyChanged ? Boolean(els.cfgKey.value.trim()) : apiKeyConfigured;
+  const savedKeyApplies = apiKeyConfigured && sameConfiguredEndpoint();
+  els.cfgKey.placeholder = !apiKeyChanged && savedKeyApplies ? "••••••••" : "sk-…";
+  const hasKey = apiKeyChanged ? Boolean(els.cfgKey.value.trim()) : savedKeyApplies;
   els.cfgKeyClear.classList.toggle("hidden", !hasKey);
 }
 
@@ -1009,6 +1263,8 @@ async function doTranslate() {
 async function loadConfigIntoUI() {
   const cfg = await invoke("load_config");
   els.cfgUrl.value = cfg.base_url || "";
+  configuredBaseUrl = els.cfgUrl.value;
+  modelDraftUrl = normalizeModelUrl(els.cfgUrl.value);
   apiKeyConfigured = Boolean(cfg.api_key_configured);
   apiKeyChanged = false;
   els.cfgKey.value = "";
@@ -1022,14 +1278,24 @@ async function loadConfigIntoUI() {
   configLoadError = cfg.load_error || "";
   showConfigStatus(configLoadError);
   els.status.textContent = configLoadError;
+  // Discovery must not delay the frontend-ready handshake or opening the flyout.
+  void refreshModelCatalog(0);
 }
 
 async function saveConfig() {
   if (configSaveInFlight) return;
+  if (!normalizeModelUrl(els.cfgUrl.value)) {
+    showConfigStatus(t("modelsInvalidUrl"));
+    return;
+  }
+  if (!els.cfgModel.value.trim()) {
+    showConfigStatus(t("modelSelect"));
+    return;
+  }
   const keyRevision = apiKeyRevision;
   const config = {
     base_url: els.cfgUrl.value.trim(),
-    api_key: apiKeyChanged ? els.cfgKey.value.trim() : null,
+    api_key: apiKeyChanged ? els.cfgKey.value.trim() : sameConfiguredEndpoint() ? null : "",
     model: els.cfgModel.value.trim(),
     lang_a: els.langA.value,
     lang_b: els.langB.value,
@@ -1040,6 +1306,7 @@ async function saveConfig() {
   els.cfgSave.disabled = true;
   try {
     await queueConfigWrite("save_config", { config });
+    configuredBaseUrl = config.base_url;
     const manualDraftUnchanged = apiKeyRevision === keyRevision
       && els.cfgUrl.value.trim() === config.base_url
       && els.cfgModel.value.trim() === config.model
@@ -1256,6 +1523,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     cfgKey: document.querySelector("#cfg-key"),
     cfgKeyClear: document.querySelector("#cfg-key-clear"),
     cfgModel: document.querySelector("#cfg-model"),
+    modelStatus: document.querySelector("#cfg-model-status"),
+    modelRetry: document.querySelector("#cfg-model-retry"),
     cfgUiLang: document.querySelector("#cfg-ui-lang"),
     cfgAppearance: document.querySelector("#cfg-appearance"),
     openSettings: document.querySelector("#open-settings"),
@@ -1274,11 +1543,20 @@ window.addEventListener("DOMContentLoaded", async () => {
   // AppKit supplies desktop blur. A second WebKit backdrop filter changes its
   // compositing when a clip animation or language dropdown becomes a layer.
   document.documentElement.setAttribute("data-native-backdrop", String(isMac));
+  modelPicker = createLanguagePicker("cfg-model", "modelLabel", "", [], () => {
+    if (!configLoadError) showConfigStatus("");
+  }, {
+    allowUnknownValue: true,
+    searchInput: document.querySelector("#cfg-model-search"),
+    list: document.querySelector("#cfg-model-options"),
+    empty: document.querySelector("#cfg-model-empty"),
+  });
   languagePickers = [
     createLanguagePicker("lang-a", "sourceLanguage", "Chinese"),
     createLanguagePicker("lang-b", "targetLanguage", "English"),
     createLanguagePicker("cfg-ui-lang", "uiLangLabel", "zh", UI_LANGUAGES, changeUiLanguage),
     createLanguagePicker("cfg-appearance", "appearanceLabel", "default", APPEARANCES, changeAppearance),
+    modelPicker,
   ];
   els.langA.value = "Chinese";
   els.langB.value = "English";
@@ -1312,16 +1590,31 @@ window.addEventListener("DOMContentLoaded", async () => {
   els.clearOutput.addEventListener("click", clearOutput);
   els.input.addEventListener("input", updateQuickActions);
   els.closeFlyout.addEventListener("click", requestClose);
+  els.cfgUrl.addEventListener("input", () => {
+    const nextUrl = normalizeModelUrl(els.cfgUrl.value);
+    if (nextUrl !== modelDraftUrl) els.cfgModel.value = "";
+    modelDraftUrl = nextUrl;
+    updateApiKeyUI();
+    refreshModelCatalog();
+  });
+  for (const field of [els.cfgUrl, els.cfgKey]) {
+    field.addEventListener("change", () => {
+      if (modelFetchTimer !== null) return refreshModelCatalog(0);
+    });
+  }
+  els.modelRetry.addEventListener("click", () => refreshModelCatalog(0));
   els.cfgKey.addEventListener("input", () => {
     apiKeyChanged = true;
     apiKeyRevision++;
     updateApiKeyUI();
+    refreshModelCatalog();
   });
   els.cfgKeyClear.addEventListener("click", () => {
     apiKeyChanged = true;
     apiKeyRevision++;
     els.cfgKey.value = "";
     updateApiKeyUI();
+    refreshModelCatalog(0);
   });
   // Command/Ctrl+Enter 快速翻译，输入法确认不触发提交。
   els.input.addEventListener("keydown", (e) => {
