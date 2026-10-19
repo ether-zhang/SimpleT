@@ -878,6 +878,10 @@ body {
 :root[data-appearance="liquid_glass"] :is(.lang-select, .swap, .secondary, #open-history, .page-back):hover {
   background-color: var(--glass-hover);
 }
+:root[data-appearance="liquid_glass"] :is(#lang-a, #lang-b):hover {
+  background: linear-gradient(rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0.30)),
+    var(--glass-fill), linear-gradient(var(--glass-surface-tint), var(--glass-surface-tint));
+}
 :root[data-appearance="liquid_glass"] #close-flyout:hover {
   background: var(--glass-close-hover);
   box-shadow: none;
@@ -934,7 +938,8 @@ body {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  :root[data-appearance="liquid_glass"] :is(.pane, .lang-select, .swap, .secondary, #open-history, .page-back, .close-flyout, .history-entry, :where(#page-settings) input, .language-menu) {
+  :root[data-appearance="liquid_glass"] :is(.pane, .lang-select, .swap, .secondary, #open-history, .page-back, .close-flyout, .history-entry, :where(#page-settings) input, .language-menu),
+  :root[data-appearance="liquid_glass"] :is(#lang-a, #lang-b):hover {
     background: Canvas;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
