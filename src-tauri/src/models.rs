@@ -1,6 +1,6 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::collections::BTreeSet;
 
-use reqwest::{redirect::Policy, Url};
+use reqwest::Url;
 use serde::Serialize;
 
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -89,12 +89,7 @@ pub async fn list_models(
 ) -> Result<Vec<String>, ModelsError> {
     let base_url = normalize_base_url(base_url)?;
     let key = discovery_key(&base_url, draft_key, saved_base_url, saved_key);
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(15))
-        .redirect(Policy::none())
-        .build()
-        .map_err(request_error)?;
+    let client = crate::http::discovery_client().map_err(request_error)?;
     let mut request = client
         .get(format!(
             "{}/models",
@@ -133,7 +128,7 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
         thread,
-        time::Instant,
+        time::{Duration, Instant},
     };
 
     fn serve_catalog(

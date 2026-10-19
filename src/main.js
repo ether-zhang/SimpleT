@@ -512,6 +512,8 @@ const MODEL_PROVIDER_NAMES = {
   openrouter: "OpenRouter", microsoft: "Microsoft", nvidia: "NVIDIA",
 };
 
+const languageNameFormatters = new Map();
+
 function t(key) {
   return (I18N[currentLang] || I18N.zh)[key];
 }
@@ -563,7 +565,10 @@ function applyLocale(lang) {
 // 某语言在指定区域设置下的显示名（失败则回退到代码本身）
 function displayName(inLocale, code) {
   try {
-    return new Intl.DisplayNames([inLocale], { type: "language" }).of(code) || code;
+    if (!languageNameFormatters.has(inLocale)) {
+      languageNameFormatters.set(inLocale, new Intl.DisplayNames([inLocale], { type: "language" }));
+    }
+    return languageNameFormatters.get(inLocale).of(code) || code;
   } catch {
     return code;
   }
@@ -633,9 +638,11 @@ function activateLanguageOption(picker, index, scroll = true) {
     return;
   }
   index = Math.max(0, Math.min(picker.options.length - 1, index));
-  picker.activeIndex = index;
-  picker.options.forEach((option, i) => option.classList.toggle("is-active", i === index));
   const option = picker.options[index];
+  const previous = picker.options[picker.activeIndex];
+  if (previous !== option) previous?.classList.remove("is-active");
+  if (!option.classList.contains("is-active")) option.classList.add("is-active");
+  picker.activeIndex = index;
   picker.trigger.setAttribute("aria-activedescendant", option.id);
   picker.searchInput?.setAttribute("aria-activedescendant", option.id);
   picker.list?.setAttribute("aria-activedescendant", option.id);
@@ -996,7 +1003,9 @@ let nativeReveal = false;
 let glassLayoutFrame = null;
 let glassLayoutRevision = 0;
 let glassLayoutSignature = "";
+let glassMaskSurfaces = [];
 let historyEntries = [];
+const historyNodes = new Map();
 let historyPendingEntries = [];
 let historyHasMore = false;
 let historyLoaded = false;
@@ -1030,37 +1039,68 @@ function historyLanguage(value) {
 }
 
 function renderHistoryEntries() {
+  if (!historyEntries.length) {
+    if (historyNodes.size) els.historyList.replaceChildren();
+    historyNodes.clear();
+    return;
+  }
+  // Resolve current system time-zone/preferences for each render. Reusing row
+  // nodes must not leave their timestamps stuck in a previous system zone.
   const formatter = new Intl.DateTimeFormat(currentLang, {
     year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
-  els.historyList.replaceChildren(...historyEntries.map((entry) => {
-    const item = document.createElement("article");
-    item.className = "history-entry";
-    item.setAttribute("role", "listitem");
-    item.setAttribute("data-history-id", String(entry.id));
-    const meta = document.createElement("div");
-    meta.className = "history-meta";
-    const languages = document.createElement("span");
-    languages.textContent = `${historyLanguage(entry.lang_a)} → ${historyLanguage(entry.lang_b)}`;
-    const time = document.createElement("time");
-    const date = new Date(entry.created_at);
-    time.dateTime = date.toISOString();
-    time.textContent = formatter.format(date);
-    meta.appendChild(languages);
-    meta.appendChild(time);
-    const texts = document.createElement("div");
-    texts.className = "history-texts";
-    for (const [text, language] of [[entry.source_text, entry.lang_a], [entry.translation, entry.lang_b]]) {
-      const paragraph = document.createElement("p");
-      paragraph.textContent = text;
-      paragraph.dir = "auto";
-      paragraph.lang = LANGUAGES.find((lang) => lang.value === language)?.code || "";
-      texts.appendChild(paragraph);
+  const dateFormat = JSON.stringify(formatter.resolvedOptions());
+  const keep = new Set(historyEntries.map((entry) => entry.id));
+  for (const [id, node] of historyNodes) {
+    if (!keep.has(id)) {
+      node.item.remove();
+      historyNodes.delete(id);
     }
-    item.appendChild(meta);
-    item.appendChild(texts);
-    return item;
-  }));
+  }
+  let cursor = els.historyList.firstElementChild;
+  for (const entry of historyEntries) {
+    let node = historyNodes.get(entry.id);
+    if (!node) {
+      const item = document.createElement("article");
+      item.className = "history-entry";
+      item.setAttribute("role", "listitem");
+      item.setAttribute("data-history-id", String(entry.id));
+      const meta = document.createElement("div");
+      meta.className = "history-meta";
+      const languages = document.createElement("span");
+      const time = document.createElement("time");
+      meta.appendChild(languages);
+      meta.appendChild(time);
+      const texts = document.createElement("div");
+      texts.className = "history-texts";
+      const paragraphs = [document.createElement("p"), document.createElement("p")];
+      paragraphs.forEach(paragraph => texts.appendChild(paragraph));
+      item.appendChild(meta);
+      item.appendChild(texts);
+      node = { item, languages, time, paragraphs };
+      historyNodes.set(entry.id, node);
+    }
+    if (node.entry !== entry || node.locale !== currentLang || node.dateFormat !== dateFormat) {
+      node.languages.textContent = `${historyLanguage(entry.lang_a)} → ${historyLanguage(entry.lang_b)}`;
+      const date = new Date(entry.created_at);
+      node.time.dateTime = date.toISOString();
+      node.time.textContent = formatter.format(date);
+      let index = 0;
+      for (const [text, language] of [[entry.source_text, entry.lang_a], [entry.translation, entry.lang_b]]) {
+        const paragraph = node.paragraphs[index++];
+        if (paragraph.textContent !== text) paragraph.textContent = text;
+        paragraph.dir = "auto";
+        paragraph.lang = LANGUAGES.find((lang) => lang.value === language)?.code || "";
+      }
+      node.entry = entry;
+      node.locale = currentLang;
+      node.dateFormat = dateFormat;
+    }
+    // Leave existing nodes in place, preserving selection and avoiding a full
+    // history-page repaint when an older page or one new translation arrives.
+    if (node.item === cursor) cursor = cursor.nextElementSibling;
+    else els.historyList.insertBefore(node.item, cursor);
+  }
 }
 
 function mergeHistory(...groups) {
@@ -1340,6 +1380,7 @@ function slideOutThenHide(generation) {
 
 function showPage(page) {
   closeLanguagePicker();
+  const previousPage = currentPage;
   currentPage = ["settings", "history"].includes(page) ? page : "translate";
   els.pageTranslate.classList.toggle("hidden", currentPage !== "translate");
   els.pageSettings.classList.toggle("hidden", currentPage !== "settings");
@@ -1348,6 +1389,16 @@ function showPage(page) {
   // Invalidate an older history request when leaving or reopening the page.
   historyRequestVersion++;
   historyLoading = false;
+  if (previousPage === "history" && currentPage !== "history") {
+    // Every visit already reloads the newest page. Release the old DOM/texts as
+    // soon as they stop being reachable through the history UI.
+    historyEntries = [];
+    historyPendingEntries = [];
+    historyLoaded = false;
+    historyHasMore = false;
+    renderHistoryEntries();
+    updateHistoryState();
+  }
   // 显示后立刻聚焦输入框，让中文输入法候选框贴着光标出现（修复其跑到左上角的问题）
   cancelPageFocus();
   focusFrame = requestAnimationFrame(() => {
@@ -1493,6 +1544,7 @@ function applyAppearance(value) {
   if (currentAppearance !== "liquid_glass") {
     els.card.style.removeProperty("--glass-background-mask");
     glassLayoutSignature = "";
+    clearGlassBackgroundMask();
   }
   const picker = languagePickers.find((item) => item.trigger === els.cfgAppearance);
   if (picker) syncLanguagePicker(picker);
@@ -1505,6 +1557,50 @@ function applyNativeReveal(enabled) {
   document.documentElement.setAttribute("data-native-reveal", String(nativeReveal));
 }
 
+function clearGlassBackgroundMask() {
+  els.glassMaskClips.replaceChildren();
+  els.glassMaskHoles.replaceChildren();
+  glassMaskSurfaces = [];
+}
+
+function updateGlassBackgroundMask(bounds, surfaces) {
+  const setAttributes = (element, attributes) => {
+    for (const [name, value] of Object.entries(attributes)) {
+      const text = String(value);
+      if (element.getAttribute(name) !== text) element.setAttribute(name, text);
+    }
+  };
+  setAttributes(els.glassMask, { width: bounds.width, height: bounds.height });
+  setAttributes(els.glassMaskBase, { width: bounds.width, height: bounds.height });
+  // These nodes stay outside the observed card, so mask maintenance cannot
+  // schedule another layout pass or accumulate decoded data-URL images.
+  for (let index = 0; index < surfaces.length; index++) {
+    if (!glassMaskSurfaces[index]) {
+      const create = (name) => document.createElementNS("http://www.w3.org/2000/svg", name);
+      const clip = create("clipPath");
+      clip.id = `glass-surface-clip-${index}`;
+      clip.setAttribute("clipPathUnits", "userSpaceOnUse");
+      const clipRect = create("rect");
+      clip.appendChild(clipRect);
+      const hole = create("rect");
+      hole.setAttribute("fill", "black");
+      hole.setAttribute("clip-path", `url(#${clip.id})`);
+      els.glassMaskClips.appendChild(clip);
+      els.glassMaskHoles.appendChild(hole);
+      glassMaskSurfaces.push({ clip, clipRect, hole });
+    }
+    const { rect, clip, radius } = surfaces[index];
+    setAttributes(glassMaskSurfaces[index].clipRect, clip);
+    setAttributes(glassMaskSurfaces[index].hole, { ...rect, rx: radius });
+  }
+  while (glassMaskSurfaces.length > surfaces.length) {
+    const { clip, hole } = glassMaskSurfaces.pop();
+    clip.remove();
+    hole.remove();
+  }
+  els.card.style.setProperty("--glass-background-mask", 'url("#glass-background-mask")');
+}
+
 // Only geometry crosses the bridge. The same rounded regions cut holes in the
 // HTML background tint and retain full native frost underneath the controls.
 function captureGlassSurfaces() {
@@ -1512,6 +1608,7 @@ function captureGlassSurfaces() {
   const round = (value) => Math.round(value * 100) / 100;
   const surfaces = [];
   if (currentAppearance === "liquid_glass") {
+    const ancestorClips = new Map();
     const selectors = ".pane, .lang-select, .swap, .secondary, .translate-btn, #open-history, .page-back, .close-flyout, .history-entry, #page-settings input, .language-menu";
     for (const element of document.querySelectorAll(selectors)) {
       const rect = element.getBoundingClientRect();
@@ -1521,9 +1618,13 @@ function captureGlassSurfaces() {
       let right = Math.min(bounds.right, rect.right);
       let bottom = Math.min(bounds.bottom, rect.bottom);
       for (let parent = element.parentElement; parent && parent !== els.card; parent = parent.parentElement) {
-        const style = getComputedStyle(parent);
-        if (/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) {
-          const clip = parent.getBoundingClientRect();
+        if (!ancestorClips.has(parent)) {
+          const style = getComputedStyle(parent);
+          ancestorClips.set(parent, /(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)
+            ? parent.getBoundingClientRect() : null);
+        }
+        const clip = ancestorClips.get(parent);
+        if (clip) {
           left = Math.max(left, clip.left);
           top = Math.max(top, clip.top);
           right = Math.min(right, clip.right);
@@ -1542,18 +1643,15 @@ function captureGlassSurfaces() {
     const signature = JSON.stringify([bounds.width, bounds.height, surfaces]);
     if (signature !== glassLayoutSignature) {
       glassLayoutSignature = signature;
-      const rectangle = ({ x, y, width, height }) => `x="${x}" y="${y}" width="${width}" height="${height}"`;
-      const clips = surfaces.map((surface, index) => `<clipPath id="c${index}"><rect ${rectangle(surface.clip)}/></clipPath>`).join("");
-      const holes = surfaces.map((surface, index) => `<rect ${rectangle(surface.rect)} rx="${surface.radius}" fill="black" clip-path="url(#c${index})"/>`).join("");
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.width}" height="${bounds.height}" viewBox="0 0 ${bounds.width} ${bounds.height}"><defs>${clips}<mask id="background" maskUnits="userSpaceOnUse" x="0" y="0" width="${bounds.width}" height="${bounds.height}"><rect width="100%" height="100%" fill="white"/>${holes}</mask></defs><rect width="100%" height="100%" fill="white" mask="url(#background)"/></svg>`;
-      els.card.style.setProperty("--glass-background-mask", `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
+      updateGlassBackgroundMask(bounds, surfaces);
     }
   }
   return { surfaces, layoutRevision: ++glassLayoutRevision };
 }
 
 function scheduleGlassSurfaces() {
-  if (glassLayoutFrame !== null || currentAppearance !== "liquid_glass") return;
+  if (glassLayoutFrame !== null || closeRequested || !els.card.classList.contains("show")
+    || currentAppearance !== "liquid_glass") return;
   glassLayoutFrame = requestAnimationFrame(() => {
     glassLayoutFrame = null;
     if (closeRequested || !els.card.classList.contains("show") || currentAppearance !== "liquid_glass") return;
@@ -1631,6 +1729,10 @@ async function persistLangs() {
 window.addEventListener("DOMContentLoaded", async () => {
   els = {
     card: document.querySelector(".card"),
+    glassMask: document.querySelector("#glass-background-mask"),
+    glassMaskBase: document.querySelector("#glass-mask-base"),
+    glassMaskClips: document.querySelector("#glass-mask-clips"),
+    glassMaskHoles: document.querySelector("#glass-mask-holes"),
     closeFlyout: document.querySelector("#close-flyout"),
     pageTranslate: document.querySelector("#page-translate"),
     pageSettings: document.querySelector("#page-settings"),

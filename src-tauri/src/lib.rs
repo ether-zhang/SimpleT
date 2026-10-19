@@ -12,6 +12,7 @@ mod glass_blur;
 mod history;
 #[cfg(target_os = "macos")]
 mod hover_focus;
+mod http;
 mod models;
 use history::{HistoryPage, HistoryStore};
 
@@ -820,6 +821,8 @@ fn request_flyout_hide(app: &tauri::AppHandle, expected_generation: Option<u32>)
         .ok()
         .and_then(|mut focus| focus.request_hide(expected_generation));
     if let (Some(generation), Some(window)) = (generation, app.get_webview_window("main")) {
+        #[cfg(target_os = "macos")]
+        hover_focus::cancel_pending();
         // The same native mask clips the frost and HTML during the whole close.
         // Keep the material installed so a quick reopen never changes its tone.
         #[cfg(target_os = "macos")]
@@ -877,7 +880,10 @@ fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
             .unwrap_or(false);
         if should_hide {
             if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.hide();
+                if window.hide().is_ok() {
+                    #[cfg(target_os = "macos")]
+                    glass_blur::suspend_hidden();
+                }
             }
         }
     })
@@ -885,11 +891,15 @@ fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn load_history(app: tauri::AppHandle, before: Option<u64>) -> Result<HistoryPage, String> {
-    app.state::<Mutex<HistoryStore>>()
-        .lock()
-        .map_err(|_| "历史记录状态不可用".to_string())?
-        .page(before)
+async fn load_history(app: tauri::AppHandle, before: Option<u64>) -> Result<HistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Mutex<HistoryStore>>()
+            .lock()
+            .map_err(|_| "历史记录状态不可用".to_string())?
+            .page(before)
+    })
+    .await
+    .map_err(|error| format!("读取历史记录任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -910,11 +920,7 @@ async fn translate(
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let body = translation_request_body(&cfg.model, &text, &lang_a, &lang_b);
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|e| format!("创建请求客户端失败：{e}"))?;
+    let client = http::translation_client().map_err(|e| format!("创建请求客户端失败：{e}"))?;
     let resp = client
         .post(&url)
         .bearer_auth(cfg.api_key.trim())
@@ -922,6 +928,9 @@ async fn translate(
         .send()
         .await
         .map_err(|e| format!("请求失败：{e}"))?;
+    // Large source/response buffers are no longer needed when history and the
+    // UI event serialize their own copies of a completed translation.
+    drop(body);
 
     let status = resp.status();
     let response_text = resp
@@ -940,11 +949,19 @@ async fn translate(
     let value: serde_json::Value =
         serde_json::from_str(&response_text).map_err(|e| format!("解析响应失败：{e}"))?;
     let translation = extract_translation(&value)?;
-    let saved = app
-        .state::<Mutex<HistoryStore>>()
-        .lock()
-        .map_err(|_| "历史记录状态不可用".to_string())
-        .and_then(|mut history| history.append(text, translation.clone(), lang_a, lang_b));
+    drop(value);
+    drop(response_text);
+    let history_app = app.clone();
+    let history_translation = translation.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        history_app
+            .state::<Mutex<HistoryStore>>()
+            .lock()
+            .map_err(|_| "历史记录状态不可用".to_string())
+            .and_then(|mut history| history.append(text, history_translation, lang_a, lang_b))
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("保存历史记录任务失败：{error}")));
     // A history write failure must never discard a successful translation.
     let payload = match saved {
         Ok(entry) => serde_json::json!({ "entry": entry }),
@@ -1501,7 +1518,7 @@ pub fn run() {
                 // flyout still gets keyboard/IME via the non-activating panel
                 // becoming key. Accessory let the app activate on show, which on
                 // a secondary display disturbed the system menu bar.
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
+                app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
                 if !install_macos_click_monitor() {
                     #[cfg(debug_assertions)]
                     eprintln!("SimpleT screen-capture: failed to install local event monitor");

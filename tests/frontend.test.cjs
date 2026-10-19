@@ -18,17 +18,23 @@ async function createApp(config = {}, options = {}) {
   const events = new Map();
   const frames = new Map();
   const mutations = [];
+  const metrics = { createdNodes: 0, classUpdates: 0, styleReads: 0, rectangleReads: 0 };
   let startup;
   let nextTimer = 1;
   let nextFrame = 1;
 
   function makeElement(selector = "") {
+    metrics.createdNodes++;
     const classes = new Set();
     const listeners = new Map();
     const attributes = new Map();
     const styles = new Map();
     return {
       selector,
+      get firstElementChild() { return this.children[0] || null; },
+      get nextElementSibling() {
+        return this.parentElement?.children[this.parentElement.children.indexOf(this) + 1] || null;
+      },
       id: selector.startsWith("#") ? selector.slice(1) : "",
       children: [], hidden: false, scrollTop: 0, scrollHeight: 0, clientHeight: 400, offsetTop: 0,
       value: "", textContent: "", disabled: false,
@@ -38,6 +44,7 @@ async function createApp(config = {}, options = {}) {
         getPropertyValue(name) { return styles.get(name) || ""; },
       },
       getBoundingClientRect() {
+        metrics.rectangleReads++;
         let hidden = false;
         for (let parent = this; parent; parent = parent.parentElement) {
           if (parent.hidden || parent.classList.contains("hidden")) hidden = true;
@@ -50,9 +57,9 @@ async function createApp(config = {}, options = {}) {
         return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height };
       },
       classList: {
-        add(...names) { names.forEach((name) => classes.add(name)); },
-        remove(...names) { names.forEach((name) => classes.delete(name)); },
-        toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); },
+        add(...names) { metrics.classUpdates++; names.forEach((name) => classes.add(name)); },
+        remove(...names) { metrics.classUpdates++; names.forEach((name) => classes.delete(name)); },
+        toggle(name, enabled) { metrics.classUpdates++; enabled ? classes.add(name) : classes.delete(name); },
         contains(name) { return classes.has(name); },
       },
       addEventListener(name, handler) { listeners.set(name, handler); },
@@ -64,8 +71,22 @@ async function createApp(config = {}, options = {}) {
         event.preventDefault ??= function () { this.defaultPrevented = true; };
         return listeners.get(name)?.(event);
       },
-      appendChild(child) { this.children.push(child); child.parentElement = this; },
+      appendChild(child) { child.remove(); this.children.push(child); child.parentElement = this; return child; },
+      insertBefore(child, before) {
+        if (child === before) return child;
+        child.remove();
+        const index = before ? this.children.indexOf(before) : this.children.length;
+        assert.ok(index >= 0);
+        this.children.splice(index, 0, child);
+        child.parentElement = this;
+        return child;
+      },
+      remove() {
+        if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this);
+        this.parentElement = null;
+      },
       replaceChildren(...children) {
+        this.children.forEach(child => { child.parentElement = null; });
         this.children = [];
         children.forEach((child) => this.appendChild(child));
       },
@@ -137,10 +158,12 @@ async function createApp(config = {}, options = {}) {
     },
     document: {
       querySelector: element, createElement: () => makeElement(), documentElement: makeElement(),
+      createElementNS: () => makeElement(),
       querySelectorAll() { return (options.surfaces || []).map(element); },
       addEventListener(name, handler) { documentListeners.set(name, handler); },
     },
     getComputedStyle(element) {
+      metrics.styleReads++;
       return { borderTopLeftRadius: "18px", overflowX: "visible", overflowY: "visible", ...options.styles?.[element.selector] };
     },
     MutationObserver: class {
@@ -151,14 +174,15 @@ async function createApp(config = {}, options = {}) {
     cancelAnimationFrame(id) { frames.delete(id); },
     setTimeout(handler) { const id = nextTimer++; timers.set(id, handler); return id; },
     clearTimeout(id) { timers.delete(id); },
-    Intl,
+    Intl: options.intl || Intl,
     URL,
   };
   vm.createContext(context);
   vm.runInContext(source, context);
   await startup();
   return {
-    element, commands, requests, timers, root: context.document.documentElement,
+    element, commands, requests, timers, metrics, root: context.document.documentElement,
+    frameCount: () => frames.size,
     emit(name, payload) { events.get(name)?.({ payload }); },
     mutateLayout() { mutations.forEach(callback => callback()); },
     runTimer(id) { const handler = timers.get(id); timers.delete(id); return handler?.(); },
@@ -936,9 +960,13 @@ test("glass surfaces cut the background tint and reach native setup before the f
     clip: { x: 15, y: 63, width: 301, height: 393 }, radius: 18,
   }]);
   const mask = app.element(".card").style.getPropertyValue("--glass-background-mask");
-  const svg = decodeURIComponent(mask.slice(mask.indexOf(",") + 1, -2));
-  assert.match(svg, /<mask id="background"/);
-  assert.match(svg, /x="15" y="63" width="301" height="393" rx="18" fill="black"/);
+  assert.equal(mask, 'url("#glass-background-mask")');
+  assert.equal(app.element("#glass-mask-base").getAttribute("width"), "744");
+  assert.equal(app.element("#glass-mask-base").getAttribute("height"), "471");
+  const hole = app.element("#glass-mask-holes").children[0];
+  for (const [name, value] of Object.entries({ x: "15", y: "63", width: "301", height: "393", rx: "18", fill: "black" })) {
+    assert.equal(hole.getAttribute(name), value);
+  }
   app.element("#lang-a").dispatch("click");
   app.mutateLayout();
   app.flushFrames();
@@ -1598,4 +1626,175 @@ test("large catalogs expose only one provider's models at a time while searching
   assert.deepEqual(visibleModelIds(app), ["vendor-19/model-49"]);
   app.element("#cfg-model-options").children[0].dispatch("click");
   assert.equal(app.element("#cfg-model").value, "vendor-19/model-49");
+});
+
+test("paging history retains existing rows and creates only the newly loaded rows", async () => {
+  const app = await createApp({}, { invoke: {
+    load_history: async ({ before }) => ({
+      entries: before ? [historyEntry(2), historyEntry(3)] : [historyEntry(4), historyEntry(5)],
+      has_more: !before,
+    }),
+  } });
+  const scroll = simulateHistoryHeight(app);
+  await app.element("#open-history").dispatch("click");
+  const previousRows = [...app.element("#history-list").children];
+  const nodesBefore = app.metrics.createdNodes;
+  scroll.scrollTop = 0;
+  scroll.dispatch("scroll");
+  await new Promise(setImmediate);
+  const rows = app.element("#history-list").children;
+  assert.deepEqual(historyIds(app), [2, 3, 4, 5]);
+  assert.equal(rows[2], previousRows[0]);
+  assert.equal(rows[3], previousRows[1]);
+  assert.ok(app.metrics.createdNodes - nodesBefore <= 14, "only two new seven-node records are created");
+  app.emit("history-updated", { entry: historyEntry(5, "updated literal <text>") });
+  assert.equal(app.element("#history-list").children[3], previousRows[1]);
+  assert.equal(previousRows[1].children[1].children[0].textContent, "updated literal <text>");
+});
+
+test("leaving history releases its page cache and revisiting reloads every retained record", async () => {
+  let entries = [historyEntry(1)];
+  const app = await createApp({}, { invoke: {
+    load_history: async () => ({ entries, has_more: false }),
+  } });
+  app.element("#input").value = "unsent draft";
+  app.element("#output").value = "existing result";
+  await app.element("#open-history").dispatch("click");
+  app.element("#history-back").dispatch("click");
+  assert.equal(app.element("#history-list").children.length, 0);
+  assert.equal(app.element("#input").value, "unsent draft");
+  assert.equal(app.element("#output").value, "existing result");
+  entries = [...entries, historyEntry(2)];
+  app.emit("history-updated", { entry: entries[1] });
+  assert.equal(app.element("#history-list").children.length, 0);
+  await app.element("#open-history").dispatch("click");
+  assert.deepEqual(historyIds(app), [1, 2]);
+});
+
+test("hundreds of glass layout updates reuse one mask resource and its rounded nodes", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    initialPage: "history", nativeReveal: true, surfaces: ["#test-history-row"],
+    rectangles: {
+      "#history-scroll": { x: 21, y: 130, width: 714, height: 200 },
+      "#test-history-row": { x: 21, y: 85, width: 714, height: 180 },
+    }, styles: { "#history-scroll": { overflowY: "auto" } },
+  });
+  app.element("#test-history-row").parentElement = app.element("#history-scroll");
+  app.flushFrames();
+  app.flushFrames();
+  const hole = app.element("#glass-mask-holes").children[0];
+  const clip = app.element("#glass-mask-clips").children[0];
+  const createdBefore = app.metrics.createdNodes;
+  const resources = new Set();
+  for (let step = 0; step < 300; step++) {
+    app.element("#test-history-row").rect = { x: 21, y: 85 - step / 10, width: 714, height: 180 };
+    app.documentEvent("scroll");
+    app.flushFrames();
+    resources.add(app.element(".card").style.getPropertyValue("--glass-background-mask"));
+    assert.equal(app.element("#glass-mask-holes").children[0], hole);
+    assert.equal(app.element("#glass-mask-clips").children[0], clip);
+  }
+  assert.deepEqual([...resources], ['url("#glass-background-mask")']);
+  assert.equal(app.metrics.createdNodes, createdBefore);
+  assert.equal(hole.getAttribute("rx"), "18");
+  app.element("#cfg-appearance").value = "default";
+  await app.element("#cfg-appearance").dispatch("change");
+  assert.equal(app.element("#glass-mask-holes").children.length, 0);
+  assert.equal(app.element("#glass-mask-clips").children.length, 0);
+});
+
+test("one glass layout pass reads a shared clipping ancestor only once", async () => {
+  const surfaces = Array.from({ length: 10 }, (_, index) => `#row-${index}`);
+  const rectangles = { "#history-scroll": { x: 21, y: 100, width: 714, height: 300 } };
+  surfaces.forEach((selector, index) => { rectangles[selector] = { x: 21, y: 130 + index * 20, width: 300, height: 20 }; });
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    initialPage: "history", nativeReveal: true, surfaces, rectangles,
+    styles: { "#history-scroll": { overflowY: "auto" } },
+  });
+  surfaces.forEach(selector => { app.element(selector).parentElement = app.element("#history-scroll"); });
+  app.flushFrames();
+  app.flushFrames();
+  const before = app.metrics.styleReads;
+  app.element(surfaces[0]).rect = { ...rectangles[surfaces[0]], y: 131 };
+  app.documentEvent("scroll");
+  app.flushFrames();
+  assert.ok(app.metrics.styleReads - before < 20);
+  assert.equal(app.commands.filter(call => call.command === "update_glass_surfaces").at(-1).args.surfaces.length, 10);
+});
+
+test("a closed flyout does not schedule glass layout frames for background mutations", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { nativeReveal: true });
+  app.flushFrames();
+  app.flushFrames();
+  await app.element("#close-flyout").dispatch("click");
+  app.flushFrames();
+  for (let i = 0; i < 100; i++) app.mutateLayout();
+  assert.equal(app.frameCount(), 0);
+});
+
+test("pointer movement in a large model group updates only the active option", async () => {
+  const app = await createApp({ model: "provider/model-0" }, { invoke: {
+    list_models: () => Array.from({ length: 650 }, (_, i) => `provider/model-${i}`),
+  } });
+  await flushPromises();
+  app.element("#open-settings").dispatch("click");
+  app.element("#cfg-model").dispatch("click");
+  const options = app.element("#cfg-model-options").children;
+  const before = app.metrics.classUpdates;
+  for (let i = 0; i < 100; i++) options[50].dispatch("pointermove");
+  assert.ok(app.metrics.classUpdates - before <= 2);
+  assert.equal(options.filter(option => option.classList.contains("is-active")).length, 1);
+  assert.equal(options[50].classList.contains("is-active"), true);
+  assert.equal(app.element("#cfg-model").value, "provider/model-0");
+});
+
+test("history updates reuse language-name formatters while locale changes keep labels correct", async () => {
+  const count = { dates: 0, names: 0 };
+  const countedIntl = Object.create(Intl);
+  countedIntl.DisplayNames = class {
+    constructor(...args) { count.names++; return new Intl.DisplayNames(...args); }
+  };
+  countedIntl.DateTimeFormat = class {
+    constructor(...args) { count.dates++; return new Intl.DateTimeFormat(...args); }
+  };
+  const app = await createApp({}, { intl: countedIntl, invoke: {
+    load_history: async () => ({ entries: [historyEntry(1)], has_more: false }),
+  } });
+  assert.equal(count.dates, 0);
+  const initialNames = count.names;
+  await app.element("#open-history").dispatch("click");
+  for (let id = 2; id <= 20; id++) app.emit("history-updated", { entry: historyEntry(id) });
+  assert.equal(count.dates, 20);
+  assert.equal(count.names, initialNames);
+  const row = app.element("#history-list").children[0];
+  assert.equal(row.children[0].children[0].textContent, "英语 → 中文");
+  app.element("#cfg-ui-lang").value = "en";
+  await app.element("#cfg-ui-lang").dispatch("change");
+  assert.equal(count.dates, 21);
+  assert.equal(app.element("#history-list").children[0], row);
+  assert.equal(row.children[0].children[0].textContent, "English → Chinese");
+  assert.equal(row.children[1].children[0].textContent, "source 1");
+});
+
+test("retained history rows follow system time-zone changes on subsequent renders", async () => {
+  let zone = "UTC";
+  const systemIntl = Object.create(Intl);
+  systemIntl.DateTimeFormat = class {
+    constructor(locales, options) { return new Intl.DateTimeFormat(locales, { ...options, timeZone: zone }); }
+  };
+  const entry = historyEntry(1);
+  const app = await createApp({}, { intl: systemIntl, invoke: {
+    load_history: async () => ({ entries: [entry], has_more: false }),
+  } });
+  await app.element("#open-history").dispatch("click");
+  const row = app.element("#history-list").children[0];
+  const time = row.children[0].children[1];
+  const previous = time.textContent;
+  zone = "Asia/Tokyo";
+  app.emit("history-updated", { entry: historyEntry(2) });
+  assert.equal(app.element("#history-list").children[0], row);
+  assert.notEqual(time.textContent, previous);
+  assert.equal(time.textContent, new Intl.DateTimeFormat("zh", {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: zone,
+  }).format(new Date(entry.created_at)));
 });

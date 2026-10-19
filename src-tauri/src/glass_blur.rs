@@ -260,7 +260,7 @@ impl BlurTuner {
         self.ivars().watch.set_root(self.ivars().view.layer());
     }
 
-    fn stop(&self) {
+    fn unobserve_view(&self) {
         if self.ivars().observing.replace(false) {
             unsafe {
                 self.ivars().view.removeObserver_forKeyPath_context(
@@ -270,6 +270,29 @@ impl BlurTuner {
                 );
             }
         }
+    }
+
+    fn suspend(&self) {
+        self.unobserve_view();
+        self.ivars().watch.set_root(None);
+    }
+
+    fn resume(&self) {
+        if !self.ivars().observing.replace(true) {
+            unsafe {
+                self.ivars().view.addObserver_forKeyPath_options_context(
+                    self,
+                    ns_string!("layer"),
+                    NSKeyValueObservingOptions::empty(),
+                    view_context(),
+                );
+            }
+        }
+        self.refresh();
+    }
+
+    fn stop(&self) {
+        self.unobserve_view();
         self.ivars().watch.stop();
     }
 }
@@ -298,16 +321,7 @@ pub fn install(view: Retained<NSView>) -> Result<(), String> {
     let tuner = BlurTuner::new(view, mtm);
     // Observe the view's root too: AppKit may replace that layer, rather than
     // only its children. There is no display link, repeated timer or frame poll.
-    unsafe {
-        tuner.ivars().view.addObserver_forKeyPath_options_context(
-            &tuner,
-            ns_string!("layer"),
-            NSKeyValueObservingOptions::empty(),
-            view_context(),
-        );
-    }
-    tuner.ivars().observing.set(true);
-    tuner.refresh();
+    tuner.resume();
     ACTIVE.with_borrow_mut(|active| *active = Some(tuner));
     Ok(())
 }
@@ -316,8 +330,18 @@ pub fn set_visible(visible: bool) {
     ACTIVE.with_borrow(|active| {
         if let Some(tuner) = active {
             if visible {
-                tuner.refresh();
+                tuner.resume();
             }
+        }
+    });
+}
+
+// Suspend only after the native window has actually hidden. The closing
+// animation still needs synchronous corrections for its entire visible span.
+pub fn suspend_hidden() {
+    ACTIVE.with_borrow(|active| {
+        if let Some(tuner) = active {
+            tuner.suspend();
         }
     });
 }
@@ -506,6 +530,23 @@ mod tests {
             unsafe { backdrop.setFilters(Some(&NSArray::from_slice(&[&*stock]))) };
             // No refresh, timer, run loop or frame callback between replacement
             // and assertion: the stock-only state must not reach a rendered frame.
+            assert_background_radius(&backdrop);
+            assert_eq!(backdrop.filters().unwrap().len(), 2);
+        }
+    }
+
+    #[test]
+    fn hidden_layers_are_unobserved_and_repaired_synchronously_before_reveal() {
+        let backdrop = backdrop();
+        let stock = filter(ns_string!("gaussianBlur"));
+        let watch = LayerWatch::new();
+        watch.set_root(Some(backdrop.clone()));
+        for _ in 0..20 {
+            watch.set_root(None);
+            assert!(watch.ivars().layers.borrow().is_empty());
+            unsafe { backdrop.setFilters(Some(&NSArray::from_slice(&[&*stock]))) };
+            assert_eq!(backdrop.filters().unwrap().len(), 1);
+            watch.set_root(Some(backdrop.clone()));
             assert_background_radius(&backdrop);
             assert_eq!(backdrop.filters().unwrap().len(), 2);
         }

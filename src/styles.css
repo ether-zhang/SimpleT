@@ -40,6 +40,11 @@ body {
   background: transparent;
 }
 
+.glass-mask-definitions {
+  position: absolute;
+  pointer-events: none;
+}
+
 /* 悬浮卡片：圆角 + 阴影，构成“轻量浮窗”外观 */
 .card {
   position: relative;

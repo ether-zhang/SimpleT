@@ -271,52 +271,89 @@ mod macos {
             }
             view.setWantsLayer(true);
             let layer = view.layer().ok_or("磨砂图层不可用")?;
-            let bounds = layer.bounds();
-            let flipped = layer.isGeometryFlipped();
-            let mask = CALayer::layer();
-            mask.setFrame(bounds);
-            mask.setGeometryFlipped(flipped);
-            mask.setBackgroundColor(Some(&background));
-            let controls = CALayer::layer();
-            controls.setFrame(bounds);
-            controls.setGeometryFlipped(flipped);
-            // Flatten overlapping controls before opacity is applied, so menus
-            // over a text pane do not accumulate a second layer of native frost.
-            controls.setAllowsGroupOpacity(true);
-            controls.setOpacity(
-                ((CONTROL_FROST_ALPHA - background_alpha) / (1.0 - background_alpha)) as f32,
-            );
-            for surface in super::material_surfaces(surfaces, bounds.size.width, bounds.size.height)
-            {
-                let rect = super::native_rect(&surface.rect, bounds.size.height, flipped);
-                let clip = super::native_rect(&surface.clip, bounds.size.height, flipped);
-                // Clip partial history rows at the scrolling viewport while keeping
-                // their original rounded corners, rather than rounding the cut edge.
-                let container = CALayer::layer();
-                container.setFrame(NSRect::new(
-                    NSPoint::new(clip.x, clip.y),
-                    NSSize::new(clip.width, clip.height),
-                ));
-                container.setGeometryFlipped(flipped);
-                container.setMasksToBounds(true);
-                let control = CALayer::layer();
-                control.setFrame(NSRect::new(
-                    NSPoint::new(rect.x - clip.x, rect.y - clip.y),
-                    NSSize::new(rect.width, rect.height),
-                ));
-                control.setCornerRadius(surface.radius);
-                control.setBackgroundColor(Some(&white));
-                container.addSublayer(&control);
-                controls.addSublayer(&container);
-            }
-            mask.addSublayer(&controls);
-            CATransaction::begin();
-            CATransaction::setDisableActions(true);
-            // All mask layers are independent and have no reference back to the view.
-            unsafe { layer.setMask(Some(&mask)) };
-            CATransaction::commit();
+            update_control_mask(&layer, surfaces, background_alpha, &white, &background);
         }
         Ok(())
+    }
+
+    fn update_control_mask(
+        layer: &CALayer,
+        surfaces: &[super::Surface],
+        background_alpha: f64,
+        white: &CGColor,
+        background: &CGColor,
+    ) {
+        let bounds = layer.bounds();
+        let flipped = layer.isGeometryFlipped();
+        let previous = layer.mask();
+        let owned = previous
+            .as_ref()
+            .is_some_and(|mask| mask.name().as_deref() == Some(ns_string!("SimpleTControlMask")));
+        let mask = if owned {
+            previous.unwrap()
+        } else {
+            CALayer::layer()
+        };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let controls = unsafe { mask.sublayers() }
+            .and_then(|layers| layers.firstObject())
+            .unwrap_or_else(|| {
+                let controls = CALayer::layer();
+                mask.addSublayer(&controls);
+                controls
+            });
+        mask.setName(Some(ns_string!("SimpleTControlMask")));
+        mask.setFrame(bounds);
+        mask.setGeometryFlipped(flipped);
+        mask.setBackgroundColor(Some(background));
+        controls.setFrame(bounds);
+        controls.setGeometryFlipped(flipped);
+        // Flatten overlapping controls before opacity is applied, so menus
+        // over a text pane do not accumulate a second layer of native frost.
+        controls.setAllowsGroupOpacity(true);
+        controls.setOpacity(
+            ((CONTROL_FROST_ALPHA - background_alpha) / (1.0 - background_alpha)) as f32,
+        );
+        let regions = super::material_surfaces(surfaces, bounds.size.width, bounds.size.height);
+        let children = unsafe { controls.sublayers() }
+            .map(|layers| layers.to_vec())
+            .unwrap_or_default();
+        for (index, surface) in regions.iter().enumerate() {
+            let rect = super::native_rect(&surface.rect, bounds.size.height, flipped);
+            let clip = super::native_rect(&surface.clip, bounds.size.height, flipped);
+            // Clip partial history rows at the scrolling viewport while keeping
+            // their original rounded corners, rather than rounding the cut edge.
+            let container = children.get(index).cloned().unwrap_or_else(|| {
+                let container = CALayer::layer();
+                container.addSublayer(&CALayer::layer());
+                controls.addSublayer(&container);
+                container
+            });
+            container.setFrame(NSRect::new(
+                NSPoint::new(clip.x, clip.y),
+                NSSize::new(clip.width, clip.height),
+            ));
+            container.setGeometryFlipped(flipped);
+            container.setMasksToBounds(true);
+            let control = unsafe { container.sublayers() }
+                .and_then(|layers| layers.firstObject())
+                .unwrap();
+            control.setFrame(NSRect::new(
+                NSPoint::new(rect.x - clip.x, rect.y - clip.y),
+                NSSize::new(rect.width, rect.height),
+            ));
+            control.setCornerRadius(surface.radius);
+            control.setBackgroundColor(Some(white));
+        }
+        for child in children.iter().skip(regions.len()) {
+            child.removeFromSuperlayer();
+        }
+        // All mask layers are independent and have no reference back to the view.
+        if !owned {
+            unsafe { layer.setMask(Some(&mask)) };
+        }
+        CATransaction::commit();
     }
 
     fn animation(
@@ -405,6 +442,106 @@ mod macos {
         CATransaction::commit();
         Ok(())
     }
+
+    #[cfg(test)]
+    mod control_mask_tests {
+        use super::*;
+        use crate::glass::{ClipRect, Surface};
+
+        fn region(x: f64) -> Surface {
+            Surface {
+                rect: ClipRect {
+                    x,
+                    y: 10.0,
+                    width: 100.0,
+                    height: 80.0,
+                },
+                clip: ClipRect {
+                    x,
+                    y: 30.0,
+                    width: 100.0,
+                    height: 60.0,
+                },
+                radius: 18.0,
+            }
+        }
+
+        fn update(layer: &CALayer, surfaces: &[Surface]) {
+            update_control_mask(
+                layer,
+                surfaces,
+                0.0,
+                &CGColor::new_srgb(1.0, 1.0, 1.0, 1.0),
+                &CGColor::new_srgb(1.0, 1.0, 1.0, 0.0),
+            );
+        }
+
+        #[test]
+        fn scrolling_reuses_native_mask_layers_and_preserves_clipped_rounded_geometry() {
+            let layer = CALayer::layer();
+            layer.setBounds(NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(744.0, 471.0),
+            ));
+            update(&layer, &[region(10.0)]);
+            let mask = layer.mask().unwrap();
+            let controls = unsafe { mask.sublayers() }.unwrap().firstObject().unwrap();
+            let container = unsafe { controls.sublayers() }
+                .unwrap()
+                .firstObject()
+                .unwrap();
+            let control = unsafe { container.sublayers() }
+                .unwrap()
+                .firstObject()
+                .unwrap();
+            for step in 0..100 {
+                let x = f64::from(step);
+                update(&layer, &[region(x)]);
+                assert!(std::ptr::eq(&*layer.mask().unwrap(), &*mask));
+                assert!(std::ptr::eq(
+                    &*unsafe { controls.sublayers() }
+                        .unwrap()
+                        .firstObject()
+                        .unwrap(),
+                    &*container
+                ));
+                assert!(std::ptr::eq(
+                    &*unsafe { container.sublayers() }
+                        .unwrap()
+                        .firstObject()
+                        .unwrap(),
+                    &*control
+                ));
+                assert_eq!(
+                    container.frame(),
+                    NSRect::new(NSPoint::new(x, 381.0), NSSize::new(100.0, 60.0))
+                );
+                assert_eq!(
+                    control.frame(),
+                    NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(100.0, 80.0))
+                );
+                assert_eq!(control.cornerRadius(), 18.0);
+            }
+        }
+
+        #[test]
+        fn switching_to_fewer_surfaces_releases_unused_native_layers() {
+            let layer = CALayer::layer();
+            layer.setBounds(NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(744.0, 471.0),
+            ));
+            update(&layer, &[region(10.0), region(200.0)]);
+            let mask = layer.mask().unwrap();
+            let controls = unsafe { mask.sublayers() }.unwrap().firstObject().unwrap();
+            assert_eq!(unsafe { controls.sublayers() }.unwrap().len(), 2);
+            update(&layer, &[region(10.0)]);
+            assert_eq!(unsafe { controls.sublayers() }.unwrap().len(), 1);
+            update(&layer, &[]);
+            assert!(unsafe { controls.sublayers() }.is_none_or(|children| children.is_empty()));
+            assert!(std::ptr::eq(&*layer.mask().unwrap(), &*mask));
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -431,7 +568,7 @@ mod tests {
             },
             radius: 999.0,
         };
-        let regions = material_surfaces(&[surface.clone()], 744.0, 471.0);
+        let regions = material_surfaces(std::slice::from_ref(&surface), 744.0, 471.0);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].rect, surface.rect);
         assert_eq!(

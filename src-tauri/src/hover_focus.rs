@@ -6,8 +6,10 @@ use objc2::{
     runtime::{AnyClass, Bool},
     sel, AllocAnyThread, DefinedClass, Encode, MainThreadOnly,
 };
+#[cfg(debug_assertions)]
+use objc2_app_kit::NSWindow;
 use objc2_app_kit::{
-    NSApplication, NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
+    NSApplication, NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView,
     NSWindowDidBecomeKeyNotification, NSWindowDidResignKeyNotification,
 };
 use objc2_foundation::{
@@ -312,6 +314,14 @@ impl Drop for HoverTracking {
 
 thread_local! {
     static TRACKING: RefCell<Option<HoverTracking>> = const { RefCell::new(None) };
+}
+
+pub fn cancel_pending() {
+    TRACKING.with_borrow(|tracking| {
+        if let Some(tracking) = tracking {
+            tracking.owner.cancel();
+        }
+    });
 }
 
 pub fn install(window: &tauri::WebviewWindow) -> Result<(), String> {

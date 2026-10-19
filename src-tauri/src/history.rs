@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -164,15 +164,20 @@ fn write_history(path: &Path, entries: &[HistoryEntry]) -> Result<(), String> {
     file.as_file()
         .set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(|error| error.to_string())?;
-    serde_json::to_writer(
-        &mut file,
-        &HistoryFileRef {
-            version: 1,
-            entries,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    file.flush().map_err(|error| error.to_string())?;
+    {
+        // JSON emits many small writes. Buffer them without changing the atomic
+        // replace, permissions, failure rollback or on-disk history format.
+        let mut writer = BufWriter::new(&mut file);
+        serde_json::to_writer(
+            &mut writer,
+            &HistoryFileRef {
+                version: 1,
+                entries,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        writer.flush().map_err(|error| error.to_string())?;
+    }
     file.as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
@@ -184,6 +189,29 @@ fn write_history(path: &Path, entries: &[HistoryEntry]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_atomic_history_round_trips_large_unicode_and_escaped_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        let mut store = HistoryStore::new(Ok(path.clone()));
+        let source = "<literal>\"\n日本語 العربية🙂".repeat(2000);
+        let mut expected = Vec::new();
+        for index in 0..5 {
+            expected.push(
+                store
+                    .append(
+                        format!("{index}: {source}"),
+                        source.clone(),
+                        "English".into(),
+                        "Chinese".into(),
+                    )
+                    .unwrap(),
+            );
+        }
+        let mut reopened = HistoryStore::new(Ok(path));
+        assert_eq!(reopened.page(None).unwrap().entries, expected);
+    }
 
     fn append(store: &mut HistoryStore) -> HistoryEntry {
         store
