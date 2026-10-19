@@ -1512,7 +1512,7 @@ function captureGlassSurfaces() {
   const round = (value) => Math.round(value * 100) / 100;
   const surfaces = [];
   if (currentAppearance === "liquid_glass") {
-    const selectors = ".pane, .lang-select, .swap, .secondary, .translate-btn, #open-history, .page-back, .history-entry, #page-settings input, .language-menu";
+    const selectors = ".pane, .lang-select, .swap, .secondary, .translate-btn, #open-history, .page-back, .close-flyout, .history-entry, #page-settings input, .language-menu";
     for (const element of document.querySelectorAll(selectors)) {
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) continue;
