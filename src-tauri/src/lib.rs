@@ -10,6 +10,8 @@ mod glass;
 #[cfg(target_os = "macos")]
 mod glass_blur;
 mod history;
+#[cfg(target_os = "macos")]
+mod hover_focus;
 mod models;
 use history::{HistoryPage, HistoryStore};
 
@@ -274,6 +276,11 @@ enum FlyoutAction {
 }
 
 impl FlyoutState {
+    #[cfg(any(target_os = "macos", test))]
+    fn can_hover_focus(&self) -> bool {
+        self.ready && self.visible && !self.closing
+    }
+
     fn prepare_show(&mut self) -> u32 {
         self.generation = self.generation.wrapping_add(1);
         self.visible = true;
@@ -1393,6 +1400,9 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
             let (native_reveal, appearance_error) = prepare_flyout_appearance(&w, generation);
             match panel {
                 Some(panel) => {
+                    if let Err(error) = hover_focus::install(&w) {
+                        eprintln!("SimpleT hover-focus: {error}");
+                    }
                     panel.show();
                     let webview: &tauri::Webview = w.as_ref();
                     let _ = webview.set_focus();
@@ -1677,6 +1687,41 @@ mod tests {
         assert_eq!(state.request_hide(Some(second)), None);
         assert!(state.commit_hide(second));
         assert!(!state.commit_hide(second));
+    }
+
+    #[test]
+    fn hover_focus_never_opens_a_pending_or_closed_flyout() {
+        let mut state = FlyoutState::default();
+        state.request_show("settings");
+        assert!(!state.can_hover_focus());
+        assert_eq!(state.frontend_ready().as_deref(), Some("settings"));
+        assert!(!state.can_hover_focus());
+
+        let generation = state.request_show("settings").unwrap();
+        assert!(state.can_hover_focus());
+        assert_eq!(state.generation, generation);
+        assert_eq!(state.current_page.as_deref(), Some("settings"));
+
+        state.request_hide(Some(generation));
+        assert!(!state.can_hover_focus());
+        assert!(state.commit_hide(generation));
+        assert!(!state.can_hover_focus());
+    }
+
+    #[test]
+    fn hover_focus_resumes_after_an_explicit_reopen_without_reviving_old_closes() {
+        let mut state = FlyoutState::default();
+        state.frontend_ready();
+        let previous = state.request_show("translate").unwrap();
+        state.request_hide(Some(previous));
+        assert!(!state.can_hover_focus());
+
+        let current = state.request_show("history").unwrap();
+        assert!(state.can_hover_focus());
+        assert!(!state.commit_hide(previous));
+        assert!(state.can_hover_focus());
+        assert_eq!(state.generation, current);
+        assert_eq!(state.current_page.as_deref(), Some("history"));
     }
 
     #[test]

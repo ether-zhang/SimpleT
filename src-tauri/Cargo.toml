@@ -23,10 +23,10 @@ tauri-plugin-clipboard-manager = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["block2", "NSEvent", "NSImage", "NSResponder", "NSScreen", "NSStatusBarButton", "NSStatusItem", "NSView", "NSVisualEffectView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", features = ["block2", "NSEvent", "NSImage", "NSResponder", "NSScreen", "NSStatusBarButton", "NSStatusItem", "NSTrackingArea", "NSView", "NSVisualEffectView", "NSWindow"] }
 objc2-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColor"] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CAAnimation", "CADisplayLink", "CAFrameRateRange", "CALayer", "CAMediaTiming", "CAMediaTimingFunction", "CATransaction", "objc2-core-graphics"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CAAnimation", "CALayer", "CAMediaTiming", "CAMediaTimingFunction", "CATransaction", "objc2-core-graphics"] }
 window-vibrancy = "0.8.1"
 # Prototype: non-activating NSPanel so the flyout can become key (IME candidate
 # window) without activating the app / switching Spaces (cross-screen).

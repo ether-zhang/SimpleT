@@ -137,10 +137,14 @@ mod macos {
 
     fn keep_glass_appearance_active(root: &NSView, enabled: bool) {
         let Some(window) = root.window() else { return };
-        let class = window.class();
+        let Some(class) = AnyClass::get(c"FlyoutPanel") else {
+            return;
+        };
         // Scope this presentation-only override to our own panel class. Real key
         // status, keyboard input, activation policy and other apps are untouched.
-        if class.name() != c"FlyoutPanel" {
+        // Observed windows may be KVO subclasses of our panel. Install on the
+        // owned base class so those wrappers inherit the stable appearance too.
+        if !window.isKindOfClass(class) {
             return;
         }
         static INSTALL: Once = Once::new();
