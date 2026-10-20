@@ -70,7 +70,7 @@ mod tests {
                     .unwrap();
             }
         });
-        tauri::async_runtime::block_on(async {
+        crate::test_runtime().block_on(async {
             let slot = OnceLock::new();
             for key in ["first-key", "second-key"] {
                 let client = cached_client(&slot, || Client::builder().build()).unwrap();

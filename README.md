@@ -50,6 +50,35 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
+## Native macOS prototype / macOS 原生原型
+
+The standalone AppKit prototype shares `crates/simplet-core` with the existing
+Tauri frontend. It does not initialize Tauri or a WebView. The production Tauri
+app and Windows frontend remain available while native behavior and resource use
+are evaluated.
+
+独立 AppKit 原型与现有 Tauri 界面共用 `crates/simplet-core`，运行时不创建 WebView。
+原有正式版本和 Windows 界面保留，供功能、外观及资源占用对比。
+
+```bash
+npm run native:build
+npm run core:test
+npm run native:test
+```
+
+The application bundle is `native-macos/target/release/bundle/SimpleT Native.app`.
+On its first run, the prototype copies the existing configuration and history to
+`native-macos/target/preview-data` if those private preview files do not exist.
+Changes in the prototype affect that copy only. No production history is replaced.
+`--data-dir <directory>` selects a different preview directory; `--fixture` uses
+`native-macos/target/fixture-data` and seeds sample history and a large model
+catalog for UI checks.
+
+构建产物位于 `native-macos/target/release/bundle/SimpleT Native.app`。
+首次运行会将已有配置和历史复制到 `native-macos/target/preview-data`，仅在副本尚不存在时复制。
+原型中的修改只影响副本。`--data-dir <目录>` 可指定其他测试目录，`--fixture` 在独立的 `native-macos/target/fixture-data` 目录准备示例历史和大模型列表。
+原生文案由 `native-macos/sync-resources.mjs` 从现有前端同步，构建时自动更新。
+
 GitHub Actions runs these checks on Windows and macOS. A damaged configuration is reported in the UI and is preserved until a complete configuration is explicitly saved in Settings.
 
 GitHub Actions 在 Windows 和 macOS 上运行上述检查。配置损坏时界面会显示错误；在设置中明确保存完整配置之前，自动保存不会覆盖原文件。

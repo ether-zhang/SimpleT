@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 *.exe
+
+# Standalone native prototype and shared-library build output.
+/native-macos/target/
+/crates/simplet-core/target/

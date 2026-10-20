@@ -22,4 +22,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo fmt --manifest-path crates/simplet-core/Cargo.toml --check
+      - run: cargo fmt --manifest-path native-macos/Cargo.toml --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: cargo test --manifest-path crates/simplet-core/Cargo.toml --locked
+      - if: runner.os == 'macOS'
+        run: cargo test --manifest-path native-macos/Cargo.toml --locked
