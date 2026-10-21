@@ -62,22 +62,31 @@ are evaluated.
 
 ```bash
 npm run native:build
+npm run native:package
 npm run core:test
 npm run native:test
 ```
 
 The application bundle is `native-macos/target/release/bundle/SimpleT Native.app`.
 On its first run, the prototype copies the existing configuration and history to
-`native-macos/target/preview-data` if those private preview files do not exist.
+`~/Library/Application Support/com.etherzhang.simplet.native-preview` if those
+private preview files do not exist. Earlier checkout-local preview data is copied
+first when available, so installing the app preserves the preview's edits.
 Changes in the prototype affect that copy only. No production history is replaced.
 `--data-dir <directory>` selects a different preview directory; `--fixture` uses
 `native-macos/target/fixture-data` and seeds sample history and a large model
 catalog for UI checks.
 
 构建产物位于 `native-macos/target/release/bundle/SimpleT Native.app`。
-首次运行会将已有配置和历史复制到 `native-macos/target/preview-data`，仅在副本尚不存在时复制。
+首次运行会将已有配置和历史复制到 `~/Library/Application Support/com.etherzhang.simplet.native-preview`，仅在副本尚不存在时复制；本机已有的旧预览数据会优先迁移，安装后不依赖项目目录。
 原型中的修改只影响副本。`--data-dir <目录>` 可指定其他测试目录，`--fixture` 在独立的 `native-macos/target/fixture-data` 目录准备示例历史和大模型列表。
 原生文案由 `native-macos/sync-resources.mjs` 从现有前端同步，构建时自动更新。
+
+`npm run native:package` creates a host-architecture DMG, an app bundle and a
+SHA-256 checksum in `native-macos/target/package/`. Drag `SimpleT Native.app` to
+Applications to install. The build uses an ad hoc signature and is not notarized.
+
+`npm run native:package` 在 `native-macos/target/package/` 生成当前架构的 DMG 安装包、App 和 SHA-256 校验文件。将 `SimpleT Native.app` 拖入“应用程序”即可安装；当前构建使用临时签名，未经过公证。
 
 GitHub Actions runs these checks on Windows and macOS. A damaged configuration is reported in the UI and is preserved until a complete configuration is explicitly saved in Settings.
 

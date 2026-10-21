@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test tests/frontend.test.cjs",
     "native:build": "node native-macos/build.mjs",
+    "native:package": "node native-macos/build.mjs --dmg",
     "native:test": "cargo test --manifest-path native-macos/Cargo.toml",
     "core:test": "cargo test --manifest-path crates/simplet-core/Cargo.toml",
     "tauri": "tauri"
