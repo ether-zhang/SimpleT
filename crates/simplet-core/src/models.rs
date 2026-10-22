@@ -158,6 +158,9 @@ mod tests {
                     Err(error) => panic!("{error}"),
                 }
             };
+            // macOS inherits the listener's nonblocking mode on accepted sockets.
+            // Use blocking I/O with the timeout below while reading the request.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
