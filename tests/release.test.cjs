@@ -100,14 +100,17 @@ test("stable and native tags select separate release variants and architecture s
   const { parseTag, buildMatrix } = await releases;
   assert.deepEqual(parseTag("v1.3.0"), { version: "1.3.0", variant: "tauri" });
   assert.deepEqual(parseTag("native-v1.3.0"), { version: "1.3.0", variant: "native" });
-  for (const tag of ["master", "v1.3.0-rc.1", "v1.3.0\n", "v1.3.0; echo bad", "native-v01.3.0"]) {
+  assert.deepEqual(parseTag("v2.0"), { version: "2.0.0", variant: "tauri" });
+  assert.deepEqual(parseTag("native-v2.0"), { version: "2.0.0", variant: "native" });
+  for (const tag of ["master", "v2", "v2.0.0.0", "v2.0\n", "v02.0", "v1.3.0-rc.1", "v1.3.0\n", "v1.3.0; echo bad", "native-v01.3.0"]) {
     assert.throws(() => parseTag(tag));
   }
   const stable = buildMatrix("tauri").include;
-  assert.equal(stable.length, 3);
+  assert.equal(stable.length, 2);
   assert.ok(stable.some(({ target }) => target === "x86_64-pc-windows-msvc"));
+  assert.ok(!stable.some(({ target }) => target === "x86_64-apple-darwin"));
   const native = buildMatrix("native").include;
-  assert.deepEqual(native.map(({ target }) => target).sort(), ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+  assert.deepEqual(native.map(({ target }) => target), ["aarch64-apple-darwin"]);
   assert.ok(native.every(({ workspace, os }) => workspace === "native-macos" && os.startsWith("macos-")));
   assert.throws(() => buildMatrix("unknown"));
 });
@@ -127,25 +130,27 @@ test("installer collection excludes stale versions and gives the Windows package
   await assert.rejects(collectAssets("1.3.0", "native", "x86_64-pc-windows-msvc", root), /Unsupported target/);
 });
 
-test("native collection keeps the preview label and Intel architecture explicit", async (t) => {
+test("native collection keeps the preview label and rejects Intel Mac builds", async (t) => {
   const root = await fixture(t);
   const directory = resolve(root, "native-macos/target/package");
   await mkdir(directory, { recursive: true });
-  await writeFile(resolve(directory, "SimpleT_Native_1.3.0_x86_64.dmg"), "native installer");
+  await writeFile(resolve(directory, "SimpleT_Native_1.3.0_aarch64.dmg"), "native installer");
   const { collectAssets } = await releases;
-  assert.deepEqual(await collectAssets("1.3.0", "native", "x86_64-apple-darwin", root), ["SimpleT_Native_1.3.0_macos_x64.dmg"]);
+  assert.deepEqual(await collectAssets("1.3.0", "native", "aarch64-apple-darwin", root), ["SimpleT_Native_1.3.0_macos_aarch64.dmg"]);
+  await assert.rejects(collectAssets("1.3.0", "native", "x86_64-apple-darwin", root), /Unsupported target/);
 });
 
 test("missing, extra or empty installers block release assembly", async (t) => {
   const directory = await fixture(t);
   const { verifyAssets } = await releases;
   const names = await installers(directory);
-  await rm(resolve(directory, names[3]));
+  const macInstaller = names.at(-1);
+  await rm(resolve(directory, macInstaller));
   await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /assets do not match/);
-  await writeFile(resolve(directory, names[3]), "");
+  await writeFile(resolve(directory, macInstaller), "");
   await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /empty installer/);
-  await writeFile(resolve(directory, names[3]), "Mac installer");
-  await writeFile(resolve(directory, "stale.dmg"), "old build");
+  await writeFile(resolve(directory, macInstaller), "Mac installer");
+  await writeFile(resolve(directory, "SimpleT_1.3.0_macos_x64.dmg"), "old Intel build");
   await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /assets do not match/);
 });
 
@@ -190,7 +195,20 @@ test("draft publication pins the built commit and uploads only the complete asse
   assert.equal(creation.draft, true);
   assert.equal(creation.prerelease, false);
   assert.equal(creation.target_commitish, "built-commit");
-  assert.equal(calls.filter(({ method }) => method === "uploadReleaseAsset").length, 5);
+  assert.equal(calls.filter(({ method }) => method === "uploadReleaseAsset").length, 4);
+});
+
+test("a short release tag is preserved while installer and app versions use three parts", async (t) => {
+  const directory = await fixture(t);
+  const names = await installers(directory, "tauri", "2.0.0");
+  const { publishDraft } = await releases;
+  const { github, calls } = githubStub();
+  await publishDraft({ github, owner: "example", repo: "simplet", tag: "v2.0", sha: "built-commit", directory, notes: "Version 2.0" });
+  const creation = calls.find(({ method }) => method === "createRelease").args;
+  assert.equal(creation.tag_name, "v2.0");
+  assert.equal(creation.name, "SimpleT 2.0.0");
+  assert.deepEqual(calls.filter(({ method }) => method === "uploadReleaseAsset").map(({ args }) => args.name), [...names, "SHA256SUMS"]);
+  assert.ok(names.every((name) => !name.includes("macos_x64")));
 });
 
 test("native drafts are always marked as previews", async (t) => {

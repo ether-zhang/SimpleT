@@ -61,15 +61,19 @@ and finishes packaging. Ordinary branch pushes still run Checks only.
 
 | Tag / 标签 | Installers / 安装包 | Release |
 | --- | --- | --- |
-| `vX.Y.Z` | Windows x64 EXE installer + MSI; macOS Apple Silicon + Intel DMG | Draft / 正式版草稿 |
-| `native-vX.Y.Z` | SimpleT Native preview, macOS Apple Silicon + Intel DMG | Prerelease draft / 预览版草稿 |
+| `vX.Y[.Z]` | Windows x64 EXE installer + MSI; macOS Apple Silicon DMG | Draft / 正式版草稿 |
+| `native-vX.Y[.Z]` | SimpleT Native preview, macOS Apple Silicon DMG | Prerelease draft / 预览版草稿 |
+
+Automatic macOS builds target Apple Silicon only. Intel Mac installers are no longer produced.
+
+macOS 自动构建仅保留 Apple Silicon，不再生成 Intel Mac 安装包；Windows x64 安装包保留。
 
 Prepare a version once, then commit the resulting manifest and lockfile changes:
 
 发版前用一个命令同步所有版本文件，检查后正常提交这些改动，无需逐一手改：
 
 ```bash
-npm run release:version -- 1.3.0
+npm run release:version -- 2.0.0
 npm run release:check
 ```
 
@@ -78,16 +82,17 @@ After committing on `master`, push the commit and tag:
 在 `master` 提交后，推送代码和对应标签：
 
 ```bash
-git tag v1.3.0
-git push origin master v1.3.0
+git tag v2.0
+git push origin master v2.0
 ```
 
-For a native preview of the same version, use `native-v1.3.0` instead. Tags must
-use three-part versions and match all application manifests and lockfiles.
+For a native preview of the same version, use `native-v2.0` instead. Tags accept
+two or three version parts: `v2.0` and `v2.0.0` both require version `2.0.0`
+in every application manifest and lockfile. A missing patch number means zero.
 The tagged commit must include the Release workflow; existing old tags are not
 rebuilt automatically.
 
-原生预览版改用 `native-v1.3.0` 标签即可。标签使用三段式版本号，必须与全部应用版本文件及锁文件一致，否则打包前就会停止。
+原生预览版改用 `native-v2.0` 标签即可。标签可使用两段或三段版本号：`v2.0` 与 `v2.0.0` 都对应包内版本 `2.0.0`，省略的补丁号按零处理。全部应用版本文件及锁文件必须一致，否则打包前就会停止。
 标签对应的提交必须包含此流水线，已有旧标签不会自动重新构建。
 
 Once the workflow succeeds, review its generated English notes and click

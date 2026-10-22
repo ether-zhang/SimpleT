@@ -7,14 +7,14 @@ import { checkVersions, projectRoot, validateVersion } from "./version.mjs";
 
 const macs = [
   { id: "macos-aarch64", os: "macos-latest", target: "aarch64-apple-darwin", bundles: "dmg" },
-  { id: "macos-x64", os: "macos-15-intel", target: "x86_64-apple-darwin", bundles: "dmg" },
 ];
 const windows = { id: "windows-x64", os: "windows-latest", target: "x86_64-pc-windows-msvc", bundles: "nsis,msi" };
 
 export function parseTag(tag) {
-  const match = /^(native-)?v(\d+\.\d+\.\d+)$/.exec(tag);
-  if (!match || match[0] !== tag) throw new Error("Release tags must be vX.Y.Z or native-vX.Y.Z");
-  return { version: validateVersion(match[2]), variant: match[1] ? "native" : "tauri" };
+  const match = /^(native-)?v(\d+\.\d+(?:\.\d+)?)$/.exec(tag);
+  if (!match || match[0] !== tag) throw new Error("Release tags must be vX.Y[.Z] or native-vX.Y[.Z]");
+  const version = match[2].split(".").length === 2 ? `${match[2]}.0` : match[2];
+  return { version: validateVersion(version), variant: match[1] ? "native" : "tauri" };
 }
 
 export function buildMatrix(variant) {

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag (vX.Y.Z or native-vX.Y.Z); leave empty for a build-only test'
+        description: 'Existing release tag (e.g. v2.0, v2.0.1 or native-v2.0); leave empty for a build-only test'
         type: string
         required: false
         default: ''
