@@ -4,7 +4,9 @@
   "version": "1.2.0",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/frontend.test.cjs",
+    "test": "node --test tests/frontend.test.cjs tests/release.test.cjs",
+    "release:version": "node scripts/version.mjs set",
+    "release:check": "node scripts/version.mjs check",
     "native:build": "node native-macos/build.mjs",
     "native:package": "node native-macos/build.mjs --dmg",
     "native:test": "cargo test --manifest-path native-macos/Cargo.toml",

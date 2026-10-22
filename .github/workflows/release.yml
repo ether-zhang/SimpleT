@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'native-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (vX.Y.Z or native-vX.Y.Z); leave empty for a build-only test'
+        type: string
+        required: false
+        default: ''
+      variant:
+        description: 'Build-only variant; a release tag determines its own variant'
+        type: choice
+        options:
+          - tauri
+          - native
+        default: tauri
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      variant: ${{ steps.plan.outputs.variant }}
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate versions and select platforms
+        id: plan
+        env:
+          RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name || '') }}
+          RELEASE_VARIANT: ${{ inputs.variant || 'tauri' }}
+        run: node scripts/release.mjs plan
+
+  build:
+    name: Build ${{ matrix.id }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VARIANT: ${{ needs.prepare.outputs.variant }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TARGET: ${{ matrix.target }}
+      BUILD_WORKSPACE: ${{ matrix.workspace }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/simplet-core -> target
+            ${{ matrix.workspace }} -> target
+          key: release-${{ matrix.id }}-${{ needs.prepare.outputs.variant }}
+      - run: npm ci
+      - run: npm test
+      - name: Check Rust formatting and tests
+        run: |
+          cargo fmt --manifest-path crates/simplet-core/Cargo.toml --check
+          cargo fmt --manifest-path "$BUILD_WORKSPACE/Cargo.toml" --check
+          cargo test --manifest-path crates/simplet-core/Cargo.toml --locked
+          cargo test --manifest-path "$BUILD_WORKSPACE/Cargo.toml" --locked
+      - name: Build Tauri installers
+        if: needs.prepare.outputs.variant == 'tauri'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          args: --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+          uploadUpdaterJson: false
+      - name: Build native macOS preview
+        if: needs.prepare.outputs.variant == 'native'
+        run: npm run native:package
+      - name: Collect versioned installers
+        run: node scripts/release.mjs collect
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.id }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  release:
+    name: Verify installers and prepare draft
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VARIANT: ${{ needs.prepare.outputs.variant }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify complete asset set and generate checksums and notes
+        run: node scripts/release.mjs finalize
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ needs.prepare.outputs.variant }}-${{ needs.prepare.outputs.version }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+      - name: Create or repair Release draft
+        if: needs.prepare.outputs.tag != ''
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { resolve } = require('node:path');
+            const { readFile } = require('node:fs/promises');
+            const { publishDraft } = await import(pathToFileURL(resolve('scripts/release.mjs')).href);
+            const url = await publishDraft({
+              github, ...context.repo,
+              tag: process.env.RELEASE_TAG,
+              sha: process.env.RELEASE_SHA,
+              directory: resolve('release-assets'),
+              notes: await readFile('release-notes.md', 'utf8'),
+            });
+            await core.summary.addLink('Review the Release draft', url).write();

@@ -50,6 +50,75 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
+## Automated releases / 自动发版
+
+[Release workflow](.github/workflows/release.yml) builds installers from the
+tagged commit and creates a **draft** only after every platform passes its tests
+and finishes packaging. Ordinary branch pushes still run Checks only.
+
+推送版本标签后，Release 流水线会自动测试、打包和上传附件；所有平台均成功后才创建草稿。
+平时推送分支仍只运行 Checks，不会发版。安装包使用统一的版本及平台名称，并附带 `SHA256SUMS` 校验文件。
+
+| Tag / 标签 | Installers / 安装包 | Release |
+| --- | --- | --- |
+| `vX.Y.Z` | Windows x64 EXE installer + MSI; macOS Apple Silicon + Intel DMG | Draft / 正式版草稿 |
+| `native-vX.Y.Z` | SimpleT Native preview, macOS Apple Silicon + Intel DMG | Prerelease draft / 预览版草稿 |
+
+Prepare a version once, then commit the resulting manifest and lockfile changes:
+
+发版前用一个命令同步所有版本文件，检查后正常提交这些改动，无需逐一手改：
+
+```bash
+npm run release:version -- 1.3.0
+npm run release:check
+```
+
+After committing on `master`, push the commit and tag:
+
+在 `master` 提交后，推送代码和对应标签：
+
+```bash
+git tag v1.3.0
+git push origin master v1.3.0
+```
+
+For a native preview of the same version, use `native-v1.3.0` instead. Tags must
+use three-part versions and match all application manifests and lockfiles.
+The tagged commit must include the Release workflow; existing old tags are not
+rebuilt automatically.
+
+原生预览版改用 `native-v1.3.0` 标签即可。标签使用三段式版本号，必须与全部应用版本文件及锁文件一致，否则打包前就会停止。
+标签对应的提交必须包含此流水线，已有旧标签不会自动重新构建。
+
+Once the workflow succeeds, review its generated English notes and click
+**Publish release** in GitHub. Notes contain New Features, Bug Fixes and macOS
+Signing Notice; feature/fix/performance entries come from conventional commit
+subjects since the previous matching tag. Draft notes can be edited. Re-running
+the workflow replaces its draft assets while preserving edited notes; published
+releases are never overwritten.
+
+流水线完成后，在 GitHub 检查自动生成的英文说明并点击 **Publish release** 即可。
+说明沿用 New Features、Bug Fixes、macOS Signing Notice 三部分，根据上个同类标签之后的规范提交生成，草稿里可以直接编辑。
+失败时重新运行即可补齐草稿附件，保留已编辑的说明；不会覆盖已公开发布的版本。
+
+To test packaging before creating a tag, open **Actions → Release → Run workflow**,
+choose a branch and variant, and leave `tag` empty. This builds all selected
+platforms and keeps the installers in workflow artifacts for seven days without
+creating a Release. To retry an existing tag, rerun its original workflow or enter
+that tag in the manual run form.
+
+想先试跑时，打开 **Actions → Release → Run workflow**，选择分支及 `tauri` 或 `native`，把 `tag` 留空。
+此时只构建安装包并保留七天，不创建 Release。已有标签可以在原任务中重新运行，也可在手动入口填写该标签重试。
+
+No additional secrets are needed: the final job uses GitHub's automatic
+`GITHUB_TOKEN` with `contents: write`. macOS builds use ad hoc signing and are not
+notarized; Windows installers are unsigned. This follows the
+[Tauri GitHub Actions guide](https://v2.tauri.app/distribute/pipelines/github/)
+and [ad hoc signing guidance](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing).
+
+目前无需额外配置密钥，最终上传任务使用 GitHub 自动提供的 `GITHUB_TOKEN`。
+macOS 沿用临时签名、未公证，Windows 安装包未签名；安装时的系统提示和现有分发方式一致。
+
 ## Native macOS prototype / macOS 原生原型
 
 The standalone AppKit prototype shares `crates/simplet-core` with the existing

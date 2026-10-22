@@ -27,3 +27,7 @@ dist-ssr
 # Standalone native prototype and shared-library build output.
 /native-macos/target/
 /crates/simplet-core/target/
+
+# Automated release staging.
+/release-assets/
+/release-notes.md
