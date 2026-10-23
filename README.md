@@ -32,12 +32,16 @@ npm ci
 npm run tauri dev
 ```
 
-Build a release package for the current platform:
+Build release files for the current platform:
 
-构建当前平台的发布包：
+构建当前平台的发布文件：
 
 ```bash
-npm run tauri build
+# Windows: directly runnable EXE / 免安装 EXE
+npm run tauri -- build --no-bundle
+
+# macOS: DMG
+npm run tauri -- build --bundles dmg
 ```
 
 Run the regression checks:
@@ -52,21 +56,29 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 ## Automated releases / 自动发版
 
-[Release workflow](.github/workflows/release.yml) builds installers from the
+[Release workflow](.github/workflows/release.yml) builds release files from the
 tagged commit and creates a **draft** only after every platform passes its tests
 and finishes packaging. Ordinary branch pushes still run Checks only.
 
 推送版本标签后，Release 流水线会自动测试、打包和上传附件；所有平台均成功后才创建草稿。
-平时推送分支仍只运行 Checks，不会发版。安装包使用统一的版本及平台名称，并附带 `SHA256SUMS` 校验文件。
+平时推送分支仍只运行 Checks，不会发版。发布文件使用统一的版本及平台名称，并附带 `SHA256SUMS` 校验文件。
 
-| Tag / 标签 | Installers / 安装包 | Release |
+| Tag / 标签 | Downloads / 下载文件 | Release |
 | --- | --- | --- |
-| `vX.Y[.Z]` | Windows x64 EXE installer + MSI; macOS Apple Silicon DMG | Draft / 正式版草稿 |
+| `vX.Y[.Z]` | Windows x64 standalone EXE; macOS Apple Silicon DMG | Draft / 正式版草稿 |
 | `native-vX.Y[.Z]` | SimpleT Native preview, macOS Apple Silicon DMG | Prerelease draft / 预览版草稿 |
 
 Automatic macOS builds target Apple Silicon only. Intel Mac installers are no longer produced.
 
-macOS 自动构建仅保留 Apple Silicon，不再生成 Intel Mac 安装包；Windows x64 安装包保留。
+macOS 自动构建仅保留 Apple Silicon，不再生成 Intel Mac 安装包；Windows x64 提供免安装 EXE。
+
+On Windows, download the `.exe` and run it directly. Settings and history remain
+in the application's normal user data directories. The system WebView2 runtime
+is required, as with the installed app. The Windows workflow uses `--no-bundle`
+and checks the executable's embedded version before uploading it.
+
+Windows 下载 `.exe` 后直接运行，无需安装。设置和历史仍使用正常的用户数据目录；与安装版一样使用系统 WebView2 运行时。
+Windows 流水线使用 `--no-bundle` 构建，并在上传前检查 EXE 内部版本号。
 
 Prepare a version once, then commit the resulting manifest and lockfile changes:
 
@@ -108,7 +120,7 @@ releases are never overwritten.
 
 To test packaging before creating a tag, open **Actions → Release → Run workflow**,
 choose a branch and variant, and leave `tag` empty. This builds all selected
-platforms and keeps the installers in workflow artifacts for seven days without
+platforms and keeps the release files in workflow artifacts for seven days without
 creating a Release. To retry an existing tag, rerun its original workflow or enter
 that tag in the manual run form.
 
@@ -117,12 +129,12 @@ that tag in the manual run form.
 
 No additional secrets are needed: the final job uses GitHub's automatic
 `GITHUB_TOKEN` with `contents: write`. macOS builds use ad hoc signing and are not
-notarized; Windows installers are unsigned. This follows the
+notarized; Windows executables are unsigned. This follows the
 [Tauri GitHub Actions guide](https://v2.tauri.app/distribute/pipelines/github/)
 and [ad hoc signing guidance](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing).
 
 目前无需额外配置密钥，最终上传任务使用 GitHub 自动提供的 `GITHUB_TOKEN`。
-macOS 沿用临时签名、未公证，Windows 安装包未签名；安装时的系统提示和现有分发方式一致。
+macOS 沿用临时签名、未公证，Windows EXE 未签名；系统提示和现有分发方式一致。
 
 ## Native macOS prototype / macOS 原生原型
 

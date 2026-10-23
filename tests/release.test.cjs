@@ -107,7 +107,12 @@ test("stable and native tags select separate release variants and architecture s
   }
   const stable = buildMatrix("tauri").include;
   assert.equal(stable.length, 2);
-  assert.ok(stable.some(({ target }) => target === "x86_64-pc-windows-msvc"));
+  const windows = stable.find(({ target }) => target === "x86_64-pc-windows-msvc");
+  assert.equal(windows.args, "--no-bundle");
+  assert.equal(windows.plainBinary, true);
+  const mac = stable.find(({ target }) => target === "aarch64-apple-darwin");
+  assert.equal(mac.args, "--bundles dmg");
+  assert.equal(mac.plainBinary, false);
   assert.ok(!stable.some(({ target }) => target === "x86_64-apple-darwin"));
   const native = buildMatrix("native").include;
   assert.deepEqual(native.map(({ target }) => target), ["aarch64-apple-darwin"]);
@@ -115,18 +120,23 @@ test("stable and native tags select separate release variants and architecture s
   assert.throws(() => buildMatrix("unknown"));
 });
 
-test("installer collection excludes stale versions and gives the Windows packages distinct names", async (t) => {
+test("Windows collection uses the standalone program instead of cached installers", async (t) => {
   const root = await fixture(t);
   const { collectAssets } = await releases;
+  const release = resolve(root, "src-tauri/target/x86_64-pc-windows-msvc/release");
   for (const [bundle, extension] of [["nsis", "exe"], ["msi", "msi"]]) {
-    const directory = resolve(root, `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/${bundle}`);
+    const directory = resolve(release, `bundle/${bundle}`);
     await mkdir(directory, { recursive: true });
-    await writeFile(resolve(directory, `SimpleT_1.3.0_x64.${extension}`), "current installer");
+    await writeFile(resolve(directory, `SimpleT_1.3.0_x64.${extension}`), "installer, not the program");
     await writeFile(resolve(directory, `SimpleT_1.2.0_x64.${extension}`), "stale installer");
   }
+  await writeFile(resolve(release, "simplet.exe"), "standalone program");
+  await writeFile(resolve(release, "SimpleT_1.2.0_windows_x64.exe"), "stale renamed copy");
   const names = await collectAssets("1.3.0", "tauri", "x86_64-pc-windows-msvc", root);
-  assert.deepEqual(names, ["SimpleT_1.3.0_windows_x64_setup.exe", "SimpleT_1.3.0_windows_x64.msi"]);
-  assert.equal(await readFile(resolve(root, "release-assets", names[0]), "utf8"), "current installer");
+  assert.deepEqual(names, ["SimpleT_1.3.0_windows_x64.exe"]);
+  assert.equal(await readFile(resolve(root, "release-assets", names[0]), "utf8"), "standalone program");
+  await rm(resolve(release, "simplet.exe"));
+  await assert.rejects(collectAssets("1.3.0", "tauri", "x86_64-pc-windows-msvc", root), /ENOENT/);
   await assert.rejects(collectAssets("1.3.0", "native", "x86_64-pc-windows-msvc", root), /Unsupported target/);
 });
 
@@ -140,7 +150,7 @@ test("native collection keeps the preview label and rejects Intel Mac builds", a
   await assert.rejects(collectAssets("1.3.0", "native", "x86_64-apple-darwin", root), /Unsupported target/);
 });
 
-test("missing, extra or empty installers block release assembly", async (t) => {
+test("missing, empty and obsolete release files block release assembly", async (t) => {
   const directory = await fixture(t);
   const { verifyAssets } = await releases;
   const names = await installers(directory);
@@ -148,9 +158,12 @@ test("missing, extra or empty installers block release assembly", async (t) => {
   await rm(resolve(directory, macInstaller));
   await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /assets do not match/);
   await writeFile(resolve(directory, macInstaller), "");
-  await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /empty installer/);
+  await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /empty release file/);
   await writeFile(resolve(directory, macInstaller), "Mac installer");
   await writeFile(resolve(directory, "SimpleT_1.3.0_macos_x64.dmg"), "old Intel build");
+  await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /assets do not match/);
+  await rm(resolve(directory, "SimpleT_1.3.0_macos_x64.dmg"));
+  await writeFile(resolve(directory, "SimpleT_1.3.0_windows_x64.msi"), "old Windows installer");
   await assert.rejects(verifyAssets("1.3.0", "tauri", directory), /assets do not match/);
 });
 
@@ -195,7 +208,7 @@ test("draft publication pins the built commit and uploads only the complete asse
   assert.equal(creation.draft, true);
   assert.equal(creation.prerelease, false);
   assert.equal(creation.target_commitish, "built-commit");
-  assert.equal(calls.filter(({ method }) => method === "uploadReleaseAsset").length, 4);
+  assert.equal(calls.filter(({ method }) => method === "uploadReleaseAsset").length, 3);
 });
 
 test("a short release tag is preserved while installer and app versions use three parts", async (t) => {
@@ -208,7 +221,7 @@ test("a short release tag is preserved while installer and app versions use thre
   assert.equal(creation.tag_name, "v2.0");
   assert.equal(creation.name, "SimpleT 2.0.0");
   assert.deepEqual(calls.filter(({ method }) => method === "uploadReleaseAsset").map(({ args }) => args.name), [...names, "SHA256SUMS"]);
-  assert.ok(names.every((name) => !name.includes("macos_x64")));
+  assert.deepEqual(names, ["SimpleT_2.0.0_windows_x64.exe", "SimpleT_2.0.0_macos_aarch64.dmg"]);
 });
 
 test("native drafts are always marked as previews", async (t) => {

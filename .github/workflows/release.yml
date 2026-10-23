@@ -95,23 +95,33 @@ jobs:
           cargo fmt --manifest-path "$BUILD_WORKSPACE/Cargo.toml" --check
           cargo test --manifest-path crates/simplet-core/Cargo.toml --locked
           cargo test --manifest-path "$BUILD_WORKSPACE/Cargo.toml" --locked
-      - name: Build Tauri installers
+      - name: Build Tauri release files
         if: needs.prepare.outputs.variant == 'tauri'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: '-'
         with:
-          args: --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+          args: --ci --target ${{ matrix.target }} ${{ matrix.args }} -- --locked
+          uploadPlainBinary: ${{ matrix.plainBinary }}
           uploadUpdaterJson: false
       - name: Build native macOS preview
         if: needs.prepare.outputs.variant == 'native'
         run: npm run native:package
-      - name: Collect versioned installers
+      - name: Verify standalone Windows EXE version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binaryPath = Join-Path $env:BUILD_WORKSPACE "target/$env:RELEASE_TARGET/release/simplet.exe"
+          $actualVersion = (Get-Item -LiteralPath $binaryPath).VersionInfo.ProductVersion
+          if ($actualVersion -ne $env:RELEASE_VERSION) {
+            throw "Windows EXE version is $actualVersion; expected $env:RELEASE_VERSION"
+          }
+      - name: Collect versioned release files
         run: node scripts/release.mjs collect
       - uses: actions/upload-artifact@v7
         with:
-          name: installers-${{ matrix.id }}
+          name: packages-${{ matrix.id }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 7
@@ -119,7 +129,7 @@ jobs:
           overwrite: true
 
   release:
-    name: Verify installers and prepare draft
+    name: Verify release files and prepare draft
     needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -140,7 +150,7 @@ jobs:
           node-version: 24
       - uses: actions/download-artifact@v8
         with:
-          pattern: installers-*
+          pattern: packages-*
           path: release-assets
           merge-multiple: true
       - name: Verify complete asset set and generate checksums and notes

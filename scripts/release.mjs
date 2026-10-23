@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { checkVersions, projectRoot, validateVersion } from "./version.mjs";
 
 const macs = [
-  { id: "macos-aarch64", os: "macos-latest", target: "aarch64-apple-darwin", bundles: "dmg" },
+  { id: "macos-aarch64", os: "macos-latest", target: "aarch64-apple-darwin", args: "--bundles dmg", plainBinary: false },
 ];
-const windows = { id: "windows-x64", os: "windows-latest", target: "x86_64-pc-windows-msvc", bundles: "nsis,msi" };
+const windows = { id: "windows-x64", os: "windows-latest", target: "x86_64-pc-windows-msvc", args: "--no-bundle", plainBinary: true };
 
 export function parseTag(tag) {
   const match = /^(native-)?v(\d+\.\d+(?:\.\d+)?)$/.exec(tag);
@@ -28,7 +28,7 @@ export function assetNames(version, variant) {
   validateVersion(version);
   return buildMatrix(variant).include.flatMap(({ id }) => {
     const prefix = `${variant === "native" ? "SimpleT_Native" : "SimpleT"}_${version}_${id.replaceAll("-", "_")}`;
-    return id === "windows-x64" ? [`${prefix}_setup.exe`, `${prefix}.msi`] : [`${prefix}.dmg`];
+    return [`${prefix}${id === "windows-x64" ? ".exe" : ".dmg"}`];
   });
 }
 
@@ -40,13 +40,18 @@ export async function collectAssets(version, variant, target, root = projectRoot
   const output = resolve(root, "release-assets");
   await mkdir(output, { recursive: true });
   for (const name of names) {
-    const extension = name.slice(name.lastIndexOf("."));
-    const directory = variant === "native" ? "native-macos/target/package"
-      : `src-tauri/target/${target}/release/bundle/${extension === ".exe" ? "nsis" : extension.slice(1)}`;
-    const candidates = (await readdir(resolve(root, directory))).filter((file) => file.endsWith(extension) && file.includes(`_${version}_`));
-    if (candidates.length !== 1) throw new Error(`Expected one ${extension} installer for ${version} in ${directory}; found ${candidates.length}`);
-    const source = resolve(root, directory, candidates[0]);
-    if ((await stat(source)).size === 0) throw new Error(`Empty installer: ${source}`);
+    let source;
+    if (entry.plainBinary) {
+      source = resolve(root, `src-tauri/target/${target}/release/simplet.exe`);
+    } else {
+      const directory = variant === "native" ? "native-macos/target/package"
+        : `src-tauri/target/${target}/release/bundle/dmg`;
+      const candidates = (await readdir(resolve(root, directory))).filter((file) => file.endsWith(".dmg") && file.includes(`_${version}_`));
+      if (candidates.length !== 1) throw new Error(`Expected one DMG for ${version} in ${directory}; found ${candidates.length}`);
+      source = resolve(root, directory, candidates[0]);
+    }
+    const info = await stat(source);
+    if (!info.isFile() || info.size === 0) throw new Error(`Missing or empty release file: ${source}`);
     await copyFile(source, resolve(output, name));
   }
   return names;
@@ -62,7 +67,7 @@ export async function verifyAssets(version, variant, directory) {
   for (const name of expected) {
     const path = resolve(directory, name);
     const info = await stat(path);
-    if (!info.isFile() || info.size === 0) throw new Error(`Missing or empty installer: ${name}`);
+    if (!info.isFile() || info.size === 0) throw new Error(`Missing or empty release file: ${name}`);
     const digest = createHash("sha256").update(await readFile(path)).digest("hex");
     files.push({ name, path, digest });
   }
@@ -109,7 +114,7 @@ export async function finalize(tag, variant, root = projectRoot) {
     await writeFile(resolve(root, "release-notes.md"), releaseNotes(subjects, variant));
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
-    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## ${tag || "Build verification (no Release created)"}\n\n${files.map(({ name }) => `- ${name}`).join("\n")}\n\nAll installers and SHA256SUMS are available in the workflow artifacts.\n`);
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## ${tag || "Build verification (no Release created)"}\n\n${files.map(({ name }) => `- ${name}`).join("\n")}\n\nAll release files and SHA256SUMS are available in the workflow artifacts.\n`);
   }
   return files;
 }
