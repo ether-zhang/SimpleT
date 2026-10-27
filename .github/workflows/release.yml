@@ -16,9 +16,10 @@ on:
         description: 'Build-only variant; a release tag determines its own variant'
         type: choice
         options:
+          - standard
           - tauri
           - native
-        default: tauri
+        default: standard
 
 permissions:
   contents: read
@@ -49,7 +50,7 @@ jobs:
         id: plan
         env:
           RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name || '') }}
-          RELEASE_VARIANT: ${{ inputs.variant || 'tauri' }}
+          RELEASE_VARIANT: ${{ inputs.variant || 'standard' }}
         run: node scripts/release.mjs plan
 
   build:
@@ -96,7 +97,7 @@ jobs:
           cargo test --manifest-path crates/simplet-core/Cargo.toml --locked
           cargo test --manifest-path "$BUILD_WORKSPACE/Cargo.toml" --locked
       - name: Build Tauri release files
-        if: needs.prepare.outputs.variant == 'tauri'
+        if: matrix.workspace == 'src-tauri'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,9 +106,18 @@ jobs:
           args: --ci --target ${{ matrix.target }} ${{ matrix.args }} -- --locked
           uploadPlainBinary: ${{ matrix.plainBinary }}
           uploadUpdaterJson: false
-      - name: Build native macOS preview
-        if: needs.prepare.outputs.variant == 'native'
+      - name: Build macOS app
+        if: matrix.workspace == 'native-macos'
         run: npm run native:package
+      - name: Verify macOS app identity and version
+        if: matrix.workspace == 'native-macos'
+        run: |
+          bundle="native-macos/target/package/SimpleT.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$bundle/Contents/Info.plist")" = "SimpleT"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist")" = "com.etherzhang.simplet"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist")" = "$RELEASE_VERSION"
+          test "$(/usr/bin/lipo -archs "$bundle/Contents/MacOS/simplet-native")" = "arm64"
+          /usr/bin/codesign --verify --deep --strict "$bundle"
       - name: Verify standalone Windows EXE version
         if: runner.os == 'Windows'
         shell: pwsh

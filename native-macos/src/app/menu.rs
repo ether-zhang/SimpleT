@@ -12,7 +12,7 @@ pub(super) fn install(app: &NSApplication) {
     let quit = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
-            ns_string!("Quit SimpleT Native"),
+            ns_string!("Quit SimpleT"),
             Some(sel!(terminate:)),
             ns_string!(""),
         )

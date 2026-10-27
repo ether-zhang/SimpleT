@@ -1,8 +1,8 @@
 # SimpleT
 
-SimpleT is a lightweight desktop translation tray app built with Tauri. It calls an OpenAI-compatible chat completions API and keeps a small flyout UI near the system tray.
+SimpleT is a lightweight desktop translation tray app. macOS uses AppKit; Windows uses Tauri. It calls an OpenAI-compatible chat completions API and keeps a small flyout UI near the system tray.
 
-SimpleT 是一个轻量级桌面托盘翻译工具，基于 Tauri 构建。它调用兼容 OpenAI Chat Completions 的接口，并在系统托盘附近显示简洁的悬浮翻译窗口。
+SimpleT 是一个轻量级桌面托盘翻译工具，macOS 使用 AppKit 原生界面，Windows 使用 Tauri。它调用兼容 OpenAI Chat Completions 的接口，并在系统托盘附近显示简洁的悬浮翻译窗口。
 
 ## Features / 功能
 
@@ -40,8 +40,8 @@ Build release files for the current platform:
 # Windows: directly runnable EXE / 免安装 EXE
 npm run tauri -- build --no-bundle
 
-# macOS: DMG
-npm run tauri -- build --bundles dmg
+# macOS: AppKit DMG / 原生界面
+npm run native:package
 ```
 
 Run the regression checks:
@@ -65,8 +65,8 @@ and finishes packaging. Ordinary branch pushes still run Checks only.
 
 | Tag / 标签 | Downloads / 下载文件 | Release |
 | --- | --- | --- |
-| `vX.Y[.Z]` | Windows x64 standalone EXE; macOS Apple Silicon DMG | Draft / 正式版草稿 |
-| `native-vX.Y[.Z]` | SimpleT Native preview, macOS Apple Silicon DMG | Prerelease draft / 预览版草稿 |
+| `vX.Y[.Z]` | Windows x64 standalone EXE; macOS Apple Silicon AppKit DMG | Draft / 正式版草稿 |
+| `native-vX.Y[.Z]` | macOS Apple Silicon prerelease DMG | Prerelease draft / 预览版草稿 |
 
 Automatic macOS builds target Apple Silicon only. Intel Mac installers are no longer produced.
 
@@ -85,7 +85,7 @@ Prepare a version once, then commit the resulting manifest and lockfile changes:
 发版前用一个命令同步所有版本文件，检查后正常提交这些改动，无需逐一手改：
 
 ```bash
-npm run release:version -- 2.0.0
+npm run release:version -- 2.1.0
 npm run release:check
 ```
 
@@ -94,17 +94,17 @@ After committing on `master`, push the commit and tag:
 在 `master` 提交后，推送代码和对应标签：
 
 ```bash
-git tag v2.0
-git push origin master v2.0
+git tag v2.1
+git push origin master v2.1
 ```
 
-For a native preview of the same version, use `native-v2.0` instead. Tags accept
-two or three version parts: `v2.0` and `v2.0.0` both require version `2.0.0`
+For a native preview of the same version, use `native-v2.1` instead. Tags accept
+two or three version parts: `v2.1` and `v2.1.0` both require version `2.1.0`
 in every application manifest and lockfile. A missing patch number means zero.
 The tagged commit must include the Release workflow; existing old tags are not
 rebuilt automatically.
 
-原生预览版改用 `native-v2.0` 标签即可。标签可使用两段或三段版本号：`v2.0` 与 `v2.0.0` 都对应包内版本 `2.0.0`，省略的补丁号按零处理。全部应用版本文件及锁文件必须一致，否则打包前就会停止。
+原生预览版改用 `native-v2.1` 标签即可。标签可使用两段或三段版本号：`v2.1` 与 `v2.1.0` 都对应包内版本 `2.1.0`，省略的补丁号按零处理。全部应用版本文件及锁文件必须一致，否则打包前就会停止。
 标签对应的提交必须包含此流水线，已有旧标签不会自动重新构建。
 
 Once the workflow succeeds, review its generated English notes and click
@@ -124,7 +124,7 @@ platforms and keeps the release files in workflow artifacts for seven days witho
 creating a Release. To retry an existing tag, rerun its original workflow or enter
 that tag in the manual run form.
 
-想先试跑时，打开 **Actions → Release → Run workflow**，选择分支及 `tauri` 或 `native`，把 `tag` 留空。
+想先试跑时，打开 **Actions → Release → Run workflow**，选择分支及 `standard`（正式发布组合）、`native`（仅 macOS）或 `tauri`（旧实现对照），把 `tag` 留空。
 此时只构建安装包并保留七天，不创建 Release。已有标签可以在原任务中重新运行，也可在手动入口填写该标签重试。
 
 No additional secrets are needed: the final job uses GitHub's automatic
@@ -136,15 +136,15 @@ and [ad hoc signing guidance](https://v2.tauri.app/distribute/sign/macos/#ad-hoc
 目前无需额外配置密钥，最终上传任务使用 GitHub 自动提供的 `GITHUB_TOKEN`。
 macOS 沿用临时签名、未公证，Windows EXE 未签名；系统提示和现有分发方式一致。
 
-## Native macOS prototype / macOS 原生原型
+## macOS app / macOS 应用
 
-The standalone AppKit prototype shares `crates/simplet-core` with the existing
-Tauri frontend. It does not initialize Tauri or a WebView. The production Tauri
-app and Windows frontend remain available while native behavior and resource use
-are evaluated.
+Starting with 2.1, the standard macOS download is the AppKit app, packaged as
+`SimpleT.app`. It shares `crates/simplet-core` with the Windows frontend and does
+not initialize Tauri or a WebView. The older Tauri macOS implementation remains
+available in source for comparison.
 
-独立 AppKit 原型与现有 Tauri 界面共用 `crates/simplet-core`，运行时不创建 WebView。
-原有正式版本和 Windows 界面保留，供功能、外观及资源占用对比。
+从 2.1 起，macOS 正式下载使用 AppKit 实现，应用统一命名为 `SimpleT.app`，运行时不创建 WebView。
+它与 Windows 共用 `crates/simplet-core`；旧 Tauri macOS 实现保留在源码中供对照。
 
 ```bash
 npm run native:build
@@ -153,26 +153,27 @@ npm run core:test
 npm run native:test
 ```
 
-The application bundle is `native-macos/target/release/bundle/SimpleT Native.app`.
-On its first run, the prototype copies the existing configuration and history to
+The application bundle is `native-macos/target/release/bundle/SimpleT.app`.
+For compatibility with installed previews, the macOS app keeps its existing data
+directory. On its first run it copies the existing configuration and history to
 `~/Library/Application Support/com.etherzhang.simplet.native-preview` if those
-private preview files do not exist. Earlier checkout-local preview data is copied
+files do not exist. Existing files are never replaced. Earlier checkout-local preview data is copied
 first when available, so installing the app preserves the preview's edits.
-Changes in the prototype affect that copy only. No production history is replaced.
+The old Tauri profile is preserved. Quit older app versions before replacing the app in Applications.
 `--data-dir <directory>` selects a different preview directory; `--fixture` uses
 `native-macos/target/fixture-data` and seeds sample history and a large model
 catalog for UI checks.
 
-构建产物位于 `native-macos/target/release/bundle/SimpleT Native.app`。
-首次运行会将已有配置和历史复制到 `~/Library/Application Support/com.etherzhang.simplet.native-preview`，仅在副本尚不存在时复制；本机已有的旧预览数据会优先迁移，安装后不依赖项目目录。
-原型中的修改只影响副本。`--data-dir <目录>` 可指定其他测试目录，`--fixture` 在独立的 `native-macos/target/fixture-data` 目录准备示例历史和大模型列表。
+构建产物位于 `native-macos/target/release/bundle/SimpleT.app`。
+为兼容已安装的预览版，沿用原数据目录，设置与历史继续可用。首次运行会将已有配置和历史复制到 `~/Library/Application Support/com.etherzhang.simplet.native-preview`，仅在副本尚不存在时复制；本机已有的旧预览数据会优先迁移，安装后不依赖项目目录。
+不会覆盖旧 Tauri 数据；安装前请先退出旧版本。`--data-dir <目录>` 可指定其他测试目录，`--fixture` 在独立的 `native-macos/target/fixture-data` 目录准备示例历史和大模型列表。
 原生文案由 `native-macos/sync-resources.mjs` 从现有前端同步，构建时自动更新。
 
 `npm run native:package` creates a host-architecture DMG, an app bundle and a
-SHA-256 checksum in `native-macos/target/package/`. Drag `SimpleT Native.app` to
+SHA-256 checksum in `native-macos/target/package/`. Drag `SimpleT.app` to
 Applications to install. The build uses an ad hoc signature and is not notarized.
 
-`npm run native:package` 在 `native-macos/target/package/` 生成当前架构的 DMG 安装包、App 和 SHA-256 校验文件。将 `SimpleT Native.app` 拖入“应用程序”即可安装；当前构建使用临时签名，未经过公证。
+`npm run native:package` 在 `native-macos/target/package/` 生成当前架构的 DMG 安装包、App 和 SHA-256 校验文件。将 `SimpleT.app` 拖入“应用程序”即可安装；当前构建使用临时签名，未经过公证。
 
 GitHub Actions runs these checks on Windows and macOS. A damaged configuration is reported in the UI and is preserved until a complete configuration is explicitly saved in Settings.
 
@@ -180,9 +181,9 @@ GitHub Actions 在 Windows 和 macOS 上运行上述检查。配置损坏时界�
 
 ## macOS compatibility / macOS 兼容性
 
-Tauri 2.12.1 or later is required. The lockfile includes the `tray-icon` fix for macOS 27 swallowing left clicks when a menu is attached ([upstream fix](https://github.com/tauri-apps/tray-icon/pull/365)). Left click toggles the translation panel; right click opens the menu.
+The macOS release uses AppKit. Left click toggles the translation panel; right click opens the menu. Standard Edit commands use the responder chain, including selection copy/paste and undo/redo.
 
-要求 Tauri 2.12.1 或更新版本。锁定的依赖包含 macOS 27 左键点击被托盘菜单拦截的修复。左键切换浮窗显示和收起，右键打开菜单。
+macOS 正式版使用 AppKit。左键切换浮窗显示和收起，右键打开菜单；标准编辑命令沿 responder chain 分发，支持选区复制粘贴和撤销／重做。
 
 Before a macOS release, verify on a real Mac: left/right tray clicks, immediate typing and Chinese IME, Escape and ×, staying visible after outside clicks, reopening, multiple displays with different scaling, and full-screen Spaces. Windows tests cannot validate these AppKit behaviors.
 
@@ -194,9 +195,9 @@ Also check opening Settings immediately after launch, repeated tray clicks durin
 
 ## Configuration / 配置
 
-Settings includes an Appearance menu with Default and Liquid Glass. Changing appearance saves only this preference, so unfinished API or model edits remain drafts. Liquid Glass combines a borderless native frosted backdrop (Popover on macOS, Acrylic on Windows) with shared glass highlights and surfaces in the WebView. Background tint is masked out beneath controls, which retain their own tint. On macOS, control regions also use separate native frost opacity from the translucent backdrop in blank areas. Overlapping controls share one opacity group. Scrolling and dropdowns update these regions without replacing the material. Material is prepared before showing the window and retained between openings, with one native mask revealing the backdrop and HTML together. Default removes the material and restores the opaque appearance. See [Tauri window effects](https://v2.tauri.app/reference/javascript/api/namespacewindow/#effect) for platform support.
+Settings includes an Appearance menu with Default and Liquid Glass. Changing appearance saves only this preference, so unfinished API or model edits remain drafts. macOS uses AppKit views and native glass materials. Windows retains its existing Tauri appearance. Default restores the opaque appearance.
 
-设置中的“外观”提供“默认”和“液态玻璃”。切换会立即应用并单独保存，不会连带保存尚未完成的 API 或模型配置。液态玻璃由无描边的原生磨砂底层和统一的玻璃控件样式组成，底层在 macOS 使用 Popover、Windows 使用 Acrylic。空白底色会避开控件区域，控件使用独立底色；macOS 的控件磨砂覆盖度与空白底层分别设置，重叠控件统一合成透明度，滚动和展开下拉菜单只更新覆盖范围。材质在窗口显示前准备好，关闭后保留供下次使用，并用同一个原生遮罩展开磨砂底层和网页内容。切回默认会移除原生材质并恢复实色界面。
+设置中的“外观”提供“默认”和“液态玻璃”。切换会立即应用并单独保存，不会连带保存尚未完成的 API 或模型配置。macOS 使用 AppKit 原生视图和玻璃材质；Windows 保持现有 Tauri 外观。切回默认恢复实色界面。
 
 Successful translations are saved automatically to `history.json` in the application's local data directory. Use the history button below Settings to browse the original text, translation, languages, and time. History is loaded in batches as you scroll upward and is retained across restarts. Failed requests are not recorded. An unreadable history file is preserved and reported in the history page.
 

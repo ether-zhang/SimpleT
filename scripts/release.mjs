@@ -14,20 +14,21 @@ export function parseTag(tag) {
   const match = /^(native-)?v(\d+\.\d+(?:\.\d+)?)$/.exec(tag);
   if (!match || match[0] !== tag) throw new Error("Release tags must be vX.Y[.Z] or native-vX.Y[.Z]");
   const version = match[2].split(".").length === 2 ? `${match[2]}.0` : match[2];
-  return { version: validateVersion(version), variant: match[1] ? "native" : "tauri" };
+  return { version: validateVersion(version), variant: match[1] ? "native" : "standard" };
 }
 
 export function buildMatrix(variant) {
-  if (!["tauri", "native"].includes(variant)) throw new Error("Unknown release variant");
+  if (!["standard", "tauri", "native"].includes(variant)) throw new Error("Unknown release variant");
   return { include: (variant === "native" ? macs : [windows, ...macs]).map((entry) => ({
-    ...entry, workspace: variant === "native" ? "native-macos" : "src-tauri",
+    ...entry, workspace: variant === "native" || (variant === "standard" && entry.id.startsWith("macos-"))
+      ? "native-macos" : "src-tauri",
   })) };
 }
 
 export function assetNames(version, variant) {
   validateVersion(version);
   return buildMatrix(variant).include.flatMap(({ id }) => {
-    const prefix = `${variant === "native" ? "SimpleT_Native" : "SimpleT"}_${version}_${id.replaceAll("-", "_")}`;
+    const prefix = `SimpleT_${version}_${id.replaceAll("-", "_")}`;
     return [`${prefix}${id === "windows-x64" ? ".exe" : ".dmg"}`];
   });
 }
@@ -44,7 +45,7 @@ export async function collectAssets(version, variant, target, root = projectRoot
     if (entry.plainBinary) {
       source = resolve(root, `src-tauri/target/${target}/release/simplet.exe`);
     } else {
-      const directory = variant === "native" ? "native-macos/target/package"
+      const directory = entry.workspace === "native-macos" ? "native-macos/target/package"
         : `src-tauri/target/${target}/release/bundle/dmg`;
       const candidates = (await readdir(resolve(root, directory))).filter((file) => file.endsWith(".dmg") && file.includes(`_${version}_`));
       if (candidates.length !== 1) throw new Error(`Expected one DMG for ${version} in ${directory}; found ${candidates.length}`);
@@ -81,9 +82,9 @@ export function releaseNotes(subjects, variant) {
   });
   const features = changes("feat");
   const fixes = [...changes("fix"), ...changes("perf")];
-  const app = variant === "native" ? '"/Applications/SimpleT Native.app"' : "/Applications/SimpleT.app";
+  const app = "/Applications/SimpleT.app";
   return [
-    ...(variant === "native" ? ["Native macOS preview. Configuration and history are stored separately from SimpleT.", ""] : []),
+    ...(variant === "native" ? ["macOS preview.", ""] : []),
     "## New Features", ...(features.length ? features : ["- No new features in this release."]), "",
     "## Bug Fixes", ...(fixes.length ? fixes : ["- No bug fixes in this release."]), "",
     "## macOS Signing Notice",
@@ -139,7 +140,7 @@ export async function publishDraft({ github, owner, repo, tag, sha, directory, n
   if (!release) {
     ({ data: release } = await github.rest.repos.createRelease({
       owner, repo, tag_name: tag, target_commitish: sha,
-      name: variant === "native" ? `SimpleT Native ${version} Preview` : `SimpleT ${version}`,
+      name: variant === "native" ? `SimpleT ${version} Preview` : `SimpleT ${version}`,
       body: notes, draft: true, prerelease: variant === "native",
     }));
   } else if (Boolean(release.prerelease) !== (variant === "native")) {
@@ -165,7 +166,7 @@ export async function publishDraft({ github, owner, repo, tag, sha, directory, n
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const tag = process.env.RELEASE_TAG || "";
-    const variant = tag ? parseTag(tag).variant : process.env.RELEASE_VARIANT || "tauri";
+    const variant = tag ? parseTag(tag).variant : process.env.RELEASE_VARIANT || "standard";
     const command = process.argv[2];
     if (command === "plan") {
       const version = await checkVersions(tag ? parseTag(tag).version : undefined);

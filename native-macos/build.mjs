@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import "./sync-resources.mjs";
 
-if (process.platform !== "darwin") throw new Error("The AppKit prototype can only be built on macOS");
+if (process.platform !== "darwin") throw new Error("The macOS app can only be built on macOS");
 const root = new URL("./", import.meta.url);
 const packageMode = process.argv.includes("--dmg");
 const version = (await readFile(new URL("Cargo.toml", root), "utf8")).match(/^version\s*=\s*"([^"]+)"/m)?.[1];
@@ -18,7 +18,7 @@ const run = (command, args) => {
 run("cargo", ["build", "--release", "--locked"]);
 // Packaging has a separate output so a running development preview stays intact.
 const output = new URL(packageMode ? "target/package/" : "target/release/bundle/", root);
-const application = new URL("SimpleT Native.app/", output);
+const application = new URL("SimpleT.app/", output);
 const bundle = new URL("Contents/", application);
 await mkdir(new URL("MacOS/", bundle), { recursive: true });
 await mkdir(new URL("Resources/", bundle), { recursive: true });
@@ -29,9 +29,9 @@ await writeFile(new URL("Info.plist", bundle), `<?xml version="1.0" encoding="UT
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>simplet-native</string>
-<key>CFBundleIdentifier</key><string>com.etherzhang.simplet.native-preview</string>
-<key>CFBundleName</key><string>SimpleT Native</string>
-<key>CFBundleDisplayName</key><string>SimpleT Native</string>
+<key>CFBundleIdentifier</key><string>com.etherzhang.simplet</string>
+<key>CFBundleName</key><string>SimpleT</string>
+<key>CFBundleDisplayName</key><string>SimpleT</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${version}</string>
 <key>CFBundleVersion</key><string>1</string>
@@ -53,13 +53,13 @@ if (packageMode) {
   const suffix = architectures.includes("arm64") && architectures.includes("x86_64") ? "universal"
     : architectures[0] === "arm64" ? "aarch64" : architectures[0];
   if (!/^[a-zA-Z0-9_]+$/.test(suffix)) throw new Error("Unexpected application architecture");
-  const name = `SimpleT_Native_${version}_${suffix}.dmg`;
+  const name = `SimpleT_${version}_${suffix}.dmg`;
   const image = new URL(name, output);
   const staging = await mkdtemp(fileURLToPath(new URL("dmg-", output)));
   try {
-    await cp(application, join(staging, "SimpleT Native.app"), { recursive: true });
+    await cp(application, join(staging, "SimpleT.app"), { recursive: true });
     await symlink("/Applications", join(staging, "Applications"));
-    run("/usr/bin/hdiutil", ["create", "-volname", "SimpleT Native", "-srcfolder", staging, "-fs", "HFS+", "-format", "UDZO", "-ov", fileURLToPath(image)]);
+    run("/usr/bin/hdiutil", ["create", "-volname", "SimpleT", "-srcfolder", staging, "-fs", "HFS+", "-format", "UDZO", "-ov", fileURLToPath(image)]);
     run("/usr/bin/hdiutil", ["verify", fileURLToPath(image)]);
     const checksum = createHash("sha256").update(await readFile(image)).digest("hex");
     await writeFile(new URL(`${name}.sha256`, output), `${checksum}  ${name}\n`);

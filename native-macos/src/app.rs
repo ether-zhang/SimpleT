@@ -171,7 +171,7 @@ define_class!(
         fn launched(&self,_notification:&NSNotification){
             match Ui::new(self,self.mtm()) {
                 Ok(ui)=>{UI.with_borrow_mut(|slot|*slot=Some(ui));post(Action::Clicked(90));}
-                Err(error)=>{eprintln!("SimpleT Native: {error}");NSApplication::sharedApplication(self.mtm()).terminate(None);}
+                Err(error)=>{eprintln!("SimpleT: {error}");NSApplication::sharedApplication(self.mtm()).terminate(None);}
             }
         }
     }
@@ -291,7 +291,7 @@ impl Ui {
         unsafe {
             panel.setReleasedWhenClosed(false);
         }
-        panel.setTitle(ns_string!("SimpleT Native"));
+        panel.setTitle(ns_string!("SimpleT"));
         panel.setOpaque(false);
         panel.setBackgroundColor(Some(&NSColor::clearColor()));
         panel.setHasShadow(false);
@@ -574,7 +574,7 @@ impl Ui {
                 image.setSize(NSSize::new(17.6, 17.6));
                 button.setImage(Some(&image));
             }
-            button.setToolTip(Some(ns_string!("SimpleT Native — 原生预览")));
+            button.setToolTip(Some(ns_string!("SimpleT")));
             unsafe {
                 button.setTarget(Some(delegate));
                 button.setAction(Some(sel!(trayClicked:)));

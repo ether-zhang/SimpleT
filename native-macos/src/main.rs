@@ -10,7 +10,5 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!(
-        "The AppKit prototype requires macOS; the Tauri app remains available on this platform."
-    );
+    eprintln!("The AppKit app requires macOS; the Tauri app remains available on this platform.");
 }

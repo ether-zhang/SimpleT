@@ -10,7 +10,7 @@
 cargo fmt --manifest-path native-macos/Cargo.toml --check
 cargo test --manifest-path native-macos/Cargo.toml --locked
 npm run native:build
-open "native-macos/target/release/bundle/SimpleT Native.app" --args --fixture
+open "native-macos/target/release/bundle/SimpleT.app" --args --fixture
 ```
 
 `--fixture` 使用独立测试数据，避免改动正式配置和历史。密码测试使用临时测试文本，不使用真实 API Key。
