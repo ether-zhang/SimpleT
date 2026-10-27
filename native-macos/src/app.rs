@@ -1,5 +1,6 @@
 mod backend;
 mod glass;
+mod menu;
 mod tables;
 mod widgets;
 
@@ -1990,6 +1991,7 @@ pub fn run() {
     // present windows. The nonactivating panel keeps ordinary tray use from
     // activating the app; unlike Tauri, orderFrontRegardless does not activate it.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    menu::install(&app);
     let delegate = unsafe {
         let this = Delegate::alloc(mtm);
         msg_send![this, init]

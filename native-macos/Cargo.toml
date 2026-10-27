@@ -4,6 +4,12 @@ version = "2.0.0"
 edition = "2021"
 publish = false
 
+[[test]]
+name = "edit_menu"
+path = "tests/edit_menu.rs"
+# AppKit must run on the process main thread, not a libtest worker thread.
+harness = false
+
 [dependencies]
 simplet-core = { path = "../crates/simplet-core" }
 serde = { version = "1", features = ["derive"] }

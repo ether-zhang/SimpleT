@@ -980,6 +980,8 @@ impl TextView {
         view.setRichText(false);
         view.setEditable(input);
         view.setSelectable(true);
+        // NSTextView undo registration is opt-in; the result remains read-only.
+        view.setAllowsUndo(input);
         view.setDrawsBackground(false);
         view.setFont(Some(&font(15.0, FontWeight::Regular)));
         view.setTextColor(Some(&NSColor::labelColor()));
