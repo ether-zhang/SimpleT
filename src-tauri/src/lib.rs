@@ -7,6 +7,8 @@ mod history;
 #[cfg(target_os = "macos")]
 mod hover_focus;
 mod models;
+#[cfg(target_os = "windows")]
+mod static_backdrop;
 use history::{HistoryPage, HistoryStore};
 
 #[cfg(target_os = "macos")]
@@ -47,6 +49,8 @@ use simplet_core::translation::{
 
 #[derive(Default)]
 struct AppState {
+    #[cfg(target_os = "windows")]
+    static_backdrop: Mutex<Option<static_backdrop::Snapshot>>,
     #[cfg(not(target_os = "macos"))]
     last_rect: Mutex<Option<Rect>>,
     config: Mutex<ConfigState>,
@@ -57,6 +61,8 @@ struct AppState {
 impl AppState {
     fn new(config: ConfigState) -> Self {
         Self {
+            #[cfg(target_os = "windows")]
+            static_backdrop: Mutex::new(None),
             #[cfg(not(target_os = "macos"))]
             last_rect: Mutex::new(None),
             config: Mutex::new(config),
@@ -380,7 +386,9 @@ fn save_appearance(app: tauri::AppHandle, appearance: Appearance) -> Result<(), 
 #[cfg(any(not(target_os = "macos"), test))]
 fn appearance_effects(appearance: Appearance) -> Option<tauri::utils::config::WindowEffectsConfig> {
     use tauri::window::{Effect, EffectState, EffectsBuilder};
-    (appearance == Appearance::LiquidGlass).then(|| {
+    // Windows draws the theme inside the WebView, so its background and content
+    // share the card's clip animation. Never install an HWND-wide backdrop.
+    (!cfg!(target_os = "windows") && appearance == Appearance::LiquidGlass).then(|| {
         EffectsBuilder::new()
             // Native frost sits behind the shared HTML glass styling.
             .effects([Effect::Popover, Effect::Acrylic])
@@ -403,15 +411,6 @@ fn apply_window_appearance(
         #[cfg(not(target_os = "macos"))]
         {
             let effects = appearance_effects(appearance);
-            #[cfg(target_os = "windows")]
-            let effects = effects.map(|mut effects| {
-                effects.color = Some(if window.theme().ok() == Some(tauri::Theme::Dark) {
-                    tauri::window::Color(24, 27, 35, 150)
-                } else {
-                    tauri::window::Color(242, 246, 252, 150)
-                });
-                effects
-            });
             window
                 .set_effects(effects)
                 .map_err(|error| error.to_string())?;
@@ -684,11 +683,46 @@ fn commit_hide(app: tauri::AppHandle, generation: u32) -> Result<(), String> {
                 if window.hide().is_ok() {
                     #[cfg(target_os = "macos")]
                     glass_blur::suspend_hidden();
+                    #[cfg(target_os = "windows")]
+                    if let Ok(mut snapshot) = handle.state::<AppState>().static_backdrop.lock() {
+                        *snapshot = None;
+                    }
                 }
             }
         }
     })
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_static_backdrop(
+    app: tauri::AppHandle,
+    generation: u32,
+    id: u32,
+) -> Result<tauri::ipc::Response, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let state = app.state::<AppState>();
+        let flyout = state.flyout.lock().map_err(|_| "浮窗状态不可用")?;
+        if flyout.generation != generation || !flyout.visible || flyout.closing {
+            return Err("背景取样已失效".into());
+        }
+        let png = state
+            .static_backdrop
+            .lock()
+            .map_err(|_| "背景状态不可用")?
+            .as_ref()
+            .and_then(|snapshot| snapshot.png_for(id))
+            .ok_or("背景取样不可用")?;
+        // Only the already blurred image crosses IPC. This command never
+        // captures the screen or returns unblurred desktop pixels.
+        Ok(tauri::ipc::Response::new(png))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, generation, id);
+        Err("当前平台不使用静态磨砂".into())
+    }
 }
 
 #[tauri::command]
@@ -1199,6 +1233,16 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                 if !current {
                     return;
                 }
+                // Position/effects have finished, and the window is still
+                // hidden: sample before showing so the app cannot capture itself.
+                #[cfg(target_os = "windows")]
+                let (static_backdrop_id, appearance_error) =
+                    match static_backdrop::prepare(&window, generation) {
+                        Ok(id) => (id, appearance_error),
+                        Err(error) => (None, appearance_error.or(Some(error))),
+                    };
+                #[cfg(not(target_os = "windows"))]
+                let static_backdrop_id: Option<u32> = None;
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
@@ -1207,6 +1251,7 @@ fn show_page(app: &tauri::AppHandle, page: &str) {
                     serde_json::json!({
                         "page": page, "origin": origin.as_str(), "generation": generation,
                         "nativeReveal": false, "appearanceError": appearance_error,
+                        "staticBackdropId": static_backdrop_id,
                     }),
                 );
             });
@@ -1238,7 +1283,8 @@ pub fn run() {
             translate,
             frontend_ready,
             request_hide,
-            commit_hide
+            commit_hide,
+            get_static_backdrop
         ])
         .setup(|app| {
             let config = ConfigState::new(read_config(app.handle()));
@@ -1855,13 +1901,18 @@ mod tests {
     }
 
     #[test]
-    fn default_clears_native_material_and_glass_includes_platform_fallbacks() {
-        use tauri::window::{Effect, EffectState};
+    fn appearance_effects_respect_platform_backdrop_support() {
         assert!(appearance_effects(Appearance::Default).is_none());
-        let glass = appearance_effects(Appearance::LiquidGlass).unwrap();
-        assert_eq!(glass.effects, vec![Effect::Popover, Effect::Acrylic]);
-        assert_eq!(glass.state, Some(EffectState::Active));
-        assert_eq!(glass.radius, Some(14.0));
+        #[cfg(target_os = "windows")]
+        assert!(appearance_effects(Appearance::LiquidGlass).is_none());
+        #[cfg(not(target_os = "windows"))]
+        {
+            use tauri::window::{Effect, EffectState};
+            let glass = appearance_effects(Appearance::LiquidGlass).unwrap();
+            assert_eq!(glass.effects, vec![Effect::Popover, Effect::Acrylic]);
+            assert_eq!(glass.state, Some(EffectState::Active));
+            assert_eq!(glass.radius, Some(14.0));
+        }
     }
 
     #[test]

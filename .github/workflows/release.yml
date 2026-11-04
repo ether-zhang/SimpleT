@@ -127,6 +127,12 @@ jobs:
           if ($actualVersion -ne $env:RELEASE_VERSION) {
             throw "Windows EXE version is $actualVersion; expected $env:RELEASE_VERSION"
           }
+          if ([version]$env:RELEASE_VERSION -ge [version]"2.1.1") {
+            $binaryText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($binaryPath))
+            if (-not $binaryText.Contains("get_static_backdrop")) {
+              throw "Windows EXE is missing the static backdrop command; refusing to release an old build"
+            }
+          }
       - name: Collect versioned release files
         run: node scripts/release.mjs collect
       - uses: actions/upload-artifact@v7

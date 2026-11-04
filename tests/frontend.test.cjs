@@ -18,6 +18,20 @@ async function createApp(config = {}, options = {}) {
   const events = new Map();
   const frames = new Map();
   const mutations = [];
+  const backdropUrls = { created: [], revoked: [], live: new Set(), maximumLive: 0 };
+  class FixtureURL extends URL {
+    static createObjectURL(blob) {
+      const url = `blob:backdrop-${backdropUrls.created.length + 1}`;
+      backdropUrls.created.push({ url, blob });
+      backdropUrls.live.add(url);
+      backdropUrls.maximumLive = Math.max(backdropUrls.maximumLive, backdropUrls.live.size);
+      return url;
+    }
+    static revokeObjectURL(url) {
+      backdropUrls.revoked.push(url);
+      backdropUrls.live.delete(url);
+    }
+  }
   const metrics = { createdNodes: 0, classUpdates: 0, styleReads: 0, rectangleReads: 0 };
   let startup;
   let nextTimer = 1;
@@ -144,6 +158,7 @@ async function createApp(config = {}, options = {}) {
           if (command === "frontend_ready") events.get("navigate")?.({ payload: {
             page: options.initialPage || "translate", origin: "bottom", generation: 1,
             nativeReveal: options.nativeReveal || false,
+            staticBackdropId: options.staticBackdropId,
           } });
           if (command === "request_hide") {
             events.get("flyout-hide")?.({ payload: { generation: args.generation } });
@@ -175,13 +190,17 @@ async function createApp(config = {}, options = {}) {
     setTimeout(handler) { const id = nextTimer++; timers.set(id, handler); return id; },
     clearTimeout(id) { timers.delete(id); },
     Intl: options.intl || Intl,
-    URL,
+    URL: FixtureURL,
+    Blob,
+    Image: class {
+      async decode() { await options.imageDecode?.(this.src); }
+    },
   };
   vm.createContext(context);
   vm.runInContext(source, context);
   await startup();
   return {
-    element, commands, requests, timers, metrics, root: context.document.documentElement,
+    element, commands, requests, timers, metrics, backdropUrls, root: context.document.documentElement,
     frameCount: () => frames.size,
     emit(name, payload) { events.get(name)?.({ payload }); },
     mutateLayout() { mutations.forEach(callback => callback()); },
@@ -825,6 +844,237 @@ test("a failed appearance save preserves the preview and a full save can recover
   await app.element("#cfg-save").dispatch("click");
   assert.equal(app.commands.find(({ command }) => command === "save_config").args.config.appearance, "liquid_glass");
   assert.match(app.element("#cfg-status").textContent, /已保存/);
+});
+
+test("Windows glass opens and closes through the card without a native reveal", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, { platform: "Win32", nativeReveal: false });
+  assert.equal(app.root.getAttribute("data-native-backdrop"), "false");
+  assert.equal(app.root.getAttribute("data-native-reveal"), "false");
+  assert.equal(app.element(".card").classList.contains("show"), false);
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.element(".card").classList.contains("show"), true);
+  await app.element("#close-flyout").dispatch("click");
+  assert.equal(app.element(".card").classList.contains("show"), false);
+  assert.equal(app.commands.some(call => call.command === "set_window_appearance"), false);
+  app.runTimer([...app.timers.keys()].at(-1));
+  assert.equal(app.commands.find(call => call.command === "commit_hide").args.generation, 1);
+  app.emit("navigate", { page: "settings", generation: 2, origin: "bottom", nativeReveal: false });
+  app.flushFrames();
+  app.flushFrames();
+  app.emit("flyout-hide", { generation: 1 });
+  assert.equal(app.element(".card").classList.contains("show"), true);
+  assert.equal(app.commands.some(call => call.command === "reveal_flyout"), false);
+});
+
+test("Windows appearance switching keeps native backdrop and reveal disabled", async () => {
+  const app = await createApp({}, { platform: "Win32", initialPage: "settings" });
+  app.flushFrames();
+  app.flushFrames();
+  for (const appearance of ["liquid_glass", "default"]) {
+    app.element("#cfg-appearance").value = appearance;
+    await app.element("#cfg-appearance").dispatch("change");
+    assert.equal(app.root.getAttribute("data-appearance"), appearance);
+    assert.equal(app.root.getAttribute("data-native-backdrop"), "false");
+    assert.equal(app.root.getAttribute("data-native-reveal"), "false");
+  }
+  assert.deepEqual(app.commands.filter(call => call.command === "set_window_appearance").map(call => call.args.appearance), ["liquid_glass", "default"]);
+  assert.equal(app.commands.some(call => call.command === "reveal_flyout"), false);
+});
+
+// Synthetic IPC bytes; real PNG encoding/decoding and GDI channel conversion
+// are covered by the Rust tests, without reading anyone's desktop.
+const backdropPng = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+const settleBackdrop = () => new Promise(setImmediate);
+
+test("static frost waits for decoding before the existing CSS opening animation", async () => {
+  const decoding = deferred();
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1, imageDecode: () => decoding.promise,
+    invoke: { get_static_backdrop: () => backdropPng.buffer },
+  });
+  await settleBackdrop();
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.element(".card").classList.contains("show"), false);
+  assert.equal(app.root.getAttribute("data-static-backdrop"), undefined);
+  assert.equal(app.backdropUrls.live.size, 1);
+  decoding.resolve();
+  await settleBackdrop();
+  assert.equal(app.root.getAttribute("data-static-backdrop"), "true");
+  assert.equal(app.element(".card").style.getPropertyValue("--static-backdrop-image"), 'url("blob:backdrop-1")');
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.element(".card").classList.contains("show"), true);
+  assert.equal(app.commands.find(call => call.command === "get_static_backdrop").args.generation, 1);
+  assert.equal(app.commands.find(call => call.command === "get_static_backdrop").args.id, 1);
+  assert.equal(app.commands.some(call => call.command === "reveal_flyout"), false);
+  assert.equal(app.backdropUrls.created[0].blob.type, "image/png");
+  assert.deepEqual(new Uint8Array(await app.backdropUrls.created[0].blob.arrayBuffer()), backdropPng);
+});
+
+test("static frost accepts a sliced binary IPC view without including surrounding bytes", async () => {
+  const bytes = new Uint8Array(backdropPng.length + 5);
+  bytes.set(backdropPng, 3);
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1,
+    invoke: { get_static_backdrop: () => bytes.subarray(3, 3 + backdropPng.length) },
+  });
+  await settleBackdrop();
+  assert.deepEqual(new Uint8Array(await app.backdropUrls.created[0].blob.arrayBuffer()), backdropPng);
+});
+
+test("switching Default to glass reuses the hidden-opening sample and preserves credential drafts", async () => {
+  const app = await createApp({}, {
+    staticBackdropId: 1, initialPage: "settings",
+    invoke: { get_static_backdrop: () => [...backdropPng] },
+  });
+  app.element("#cfg-url").value = "https://draft.example/v1";
+  app.element("#cfg-key").value = "unsaved secret";
+  assert.equal(app.commands.some(call => call.command === "get_static_backdrop"), false);
+  for (const appearance of ["liquid_glass", "default", "liquid_glass"]) {
+    app.element("#cfg-appearance").value = appearance;
+    await app.element("#cfg-appearance").dispatch("change");
+    assert.equal(app.backdropUrls.live.size, appearance === "default" ? 0 : 1);
+    assert.equal(app.element("#cfg-key").value, "unsaved secret");
+    assert.equal(app.root.getAttribute("data-native-backdrop"), "false");
+  }
+  assert.deepEqual(app.commands.filter(call => call.command === "get_static_backdrop").map(call => call.args.id), [1, 1]);
+  assert.equal(app.commands.some(call => call.command === "save_config"), false);
+  assert.equal(app.backdropUrls.maximumLive, 1);
+});
+
+test("a stale backdrop fetch cannot replace the image of a new opening", async () => {
+  const old = deferred();
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1,
+    invoke: { get_static_backdrop: ({ id }) => id === 1 ? old.promise : backdropPng },
+  });
+  app.emit("navigate", { page: "translate", generation: 2, staticBackdropId: 2 });
+  await settleBackdrop();
+  const latest = app.element(".card").style.getPropertyValue("--static-backdrop-image");
+  old.resolve(backdropPng);
+  await settleBackdrop();
+  assert.equal(app.element(".card").style.getPropertyValue("--static-backdrop-image"), latest);
+  assert.equal(app.backdropUrls.created.length, 1);
+  assert.equal(app.backdropUrls.live.size, 1);
+});
+
+test("a stale decode is revoked and cannot overwrite a newly decoded backdrop", async () => {
+  const oldDecode = deferred();
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1,
+    imageDecode: url => url === "blob:backdrop-1" ? oldDecode.promise : undefined,
+    invoke: { get_static_backdrop: () => backdropPng },
+  });
+  await settleBackdrop();
+  app.emit("navigate", { page: "settings", generation: 2, staticBackdropId: 2 });
+  await settleBackdrop();
+  oldDecode.resolve();
+  await settleBackdrop();
+  assert.equal(app.element(".card").style.getPropertyValue("--static-backdrop-image"), 'url("blob:backdrop-2")');
+  assert.deepEqual([...app.backdropUrls.live], ["blob:backdrop-2"]);
+  assert.equal(app.backdropUrls.maximumLive, 1);
+});
+
+test("closing during decoding never reopens the card or leaves a backdrop URL alive", async () => {
+  const decoding = deferred();
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1, imageDecode: () => decoding.promise,
+    invoke: { get_static_backdrop: () => backdropPng },
+  });
+  await settleBackdrop();
+  await app.element("#close-flyout").dispatch("click");
+  app.runTimer([...app.timers.keys()].at(-1));
+  await settleBackdrop();
+  decoding.resolve();
+  await settleBackdrop();
+  app.flushFrames();
+  app.flushFrames();
+  assert.equal(app.element(".card").classList.contains("show"), false);
+  assert.equal(app.backdropUrls.live.size, 0);
+  assert.equal(app.root.getAttribute("data-static-backdrop"), undefined);
+});
+
+test("a delayed close acknowledgement does not release the next opening's backdrop", async () => {
+  const oldHide = deferred();
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1,
+    invoke: { get_static_backdrop: () => backdropPng, commit_hide: () => oldHide.promise },
+  });
+  await settleBackdrop();
+  await app.element("#close-flyout").dispatch("click");
+  app.runTimer([...app.timers.keys()].at(-1));
+  app.emit("navigate", { page: "translate", generation: 2, staticBackdropId: 2 });
+  await settleBackdrop();
+  oldHide.resolve();
+  await settleBackdrop();
+  assert.equal(app.root.getAttribute("data-static-backdrop"), "true");
+  assert.deepEqual([...app.backdropUrls.live], ["blob:backdrop-2"]);
+});
+
+test("repeated static frosted openings release each image after the close animation", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1, invoke: { get_static_backdrop: () => backdropPng },
+  });
+  for (let generation = 1; generation <= 8; generation++) {
+    if (generation > 1) app.emit("navigate", { page: "translate", generation, staticBackdropId: generation });
+    await settleBackdrop();
+    app.flushFrames();
+    app.flushFrames();
+    assert.equal(app.element(".card").classList.contains("show"), true);
+    await app.element("#close-flyout").dispatch("click");
+    assert.equal(app.root.getAttribute("data-static-backdrop"), "true");
+    app.runTimer([...app.timers.keys()].at(-1));
+    await settleBackdrop();
+    assert.equal(app.backdropUrls.live.size, 0);
+    assert.equal(app.element(".card").style.getPropertyValue("--static-backdrop-image"), "");
+  }
+  assert.equal(app.backdropUrls.created.length, 8);
+  assert.equal(app.backdropUrls.maximumLive, 1);
+  const captureCalls = app.commands.filter(call => call.command === "get_static_backdrop");
+  assert.equal(captureCalls.length, 8);
+  assert.ok(captureCalls.every(call => Object.keys(call.args).sort().join() === "generation,id"));
+});
+
+for (const problem of ["unavailable", "invalid PNG", "decode failure"]) {
+  test(`static frost falls back to CSS and still opens on ${problem}`, async () => {
+    const app = await createApp({ appearance: "liquid_glass" }, {
+      staticBackdropId: 1,
+      imageDecode: () => { if (problem === "decode failure") throw new Error("decode failed"); },
+      invoke: { get_static_backdrop: () => {
+        if (problem === "unavailable") throw new Error("sample unavailable");
+        return problem === "invalid PNG" ? [0, 1, 2] : backdropPng;
+      } },
+    });
+    await settleBackdrop();
+    app.flushFrames();
+    app.flushFrames();
+    assert.equal(app.element(".card").classList.contains("show"), true);
+    assert.equal(app.root.getAttribute("data-static-backdrop"), undefined);
+    assert.equal(app.backdropUrls.live.size, 0);
+    assert.match(app.element("#cfg-status").textContent, /外观设置失败/);
+  });
+}
+
+test("page disposal releases the backdrop and invalidates pending image work", async () => {
+  const app = await createApp({ appearance: "liquid_glass" }, {
+    staticBackdropId: 1, invoke: { get_static_backdrop: () => backdropPng },
+  });
+  await settleBackdrop();
+  app.windowEvent("pagehide");
+  assert.equal(app.backdropUrls.live.size, 0);
+  assert.equal(app.root.getAttribute("data-static-backdrop"), undefined);
+});
+
+test("macOS and invalid snapshot IDs never request a Windows static background", async () => {
+  for (const options of [{ platform: "MacIntel", staticBackdropId: 1 }, {},
+    { staticBackdropId: -1 }, { staticBackdropId: "1" }, { staticBackdropId: 0x100000000 }]) {
+    const app = await createApp({ appearance: "liquid_glass" }, options);
+    await settleBackdrop();
+    assert.equal(app.commands.some(call => call.command === "get_static_backdrop"), false);
+    assert.equal(app.backdropUrls.created.length, 0);
+  }
 });
 
 test("prepared native glass reveals once, without changing material after an animation or dropdown", async () => {

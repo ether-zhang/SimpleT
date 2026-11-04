@@ -1000,6 +1000,11 @@ let appearanceRevision = 0;
 let appearanceStatus = "";
 let windowAppearanceRevision = 0;
 let nativeReveal = false;
+let staticBackdropId = null;
+let staticBackdropUrl = null;
+let staticBackdropUrlId = null;
+let staticBackdropPendingUrl = null;
+let staticBackdropRevision = 0;
 let glassLayoutFrame = null;
 let glassLayoutRevision = 0;
 let glassLayoutSignature = "";
@@ -1333,6 +1338,67 @@ function prepareSlideIn(origin) {
   els.card.classList.remove("no-transition");
 }
 
+function releaseStaticBackdrop() {
+  staticBackdropRevision++;
+  if (staticBackdropUrl) URL.revokeObjectURL(staticBackdropUrl);
+  if (staticBackdropPendingUrl) URL.revokeObjectURL(staticBackdropPendingUrl);
+  staticBackdropUrl = staticBackdropPendingUrl = null;
+  staticBackdropUrlId = null;
+  els.card.style.removeProperty("--static-backdrop-image");
+  document.documentElement.removeAttribute("data-static-backdrop");
+}
+
+function prepareStaticBackdrop(generation) {
+  const id = staticBackdropId;
+  if (isMac || currentAppearance !== "liquid_glass" || id === null) {
+    releaseStaticBackdrop();
+    return null;
+  }
+  if (staticBackdropUrl && staticBackdropUrlId === id) return null;
+  releaseStaticBackdrop();
+  const revision = staticBackdropRevision;
+  const current = () => revision === staticBackdropRevision && generation === flyoutGeneration
+    && !closeRequested && currentAppearance === "liquid_glass";
+  return (async () => {
+    let url = null;
+    try {
+      const data = await invoke("get_static_backdrop", { generation, id });
+      if (!current()) return;
+      const bytes = ArrayBuffer.isView(data)
+        ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data);
+      const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+      if (bytes.length < signature.length || bytes.length > 1024 * 1024
+        || !signature.every((value, index) => bytes[index] === value)) {
+        throw new Error("背景取样格式无效");
+      }
+      url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+      staticBackdropPendingUrl = url;
+      const image = new Image();
+      image.src = url;
+      // Decode before starting the opening animation; never flash a sharp or
+      // partially loaded backdrop. IPC only supplies a low-resolution blurred PNG.
+      await image.decode();
+      if (!current()) return;
+      staticBackdropUrl = url;
+      staticBackdropUrlId = id;
+      staticBackdropPendingUrl = null;
+      els.card.style.setProperty("--static-backdrop-image", `url("${url}")`);
+      document.documentElement.setAttribute("data-static-backdrop", "true");
+      url = null;
+    } catch (error) {
+      if (current()) {
+        appearanceStatus = `${t("appearanceError")}: ${error}`;
+        showConfigStatus(appearanceStatus);
+      }
+    } finally {
+      if (url) {
+        URL.revokeObjectURL(url);
+        if (staticBackdropPendingUrl === url) staticBackdropPendingUrl = null;
+      }
+    }
+  })();
+}
+
 // 卡片从下方滑入（打开）
 function slideIn(origin) {
   closeRequested = false;
@@ -1341,23 +1407,29 @@ function slideIn(origin) {
   cancelSlideInFrames();
   prepareSlideIn(origin);
   const generation = flyoutGeneration;
-  // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
-  firstOpenFrame = requestAnimationFrame(() => {
-    firstOpenFrame = null;
-    secondOpenFrame = requestAnimationFrame(() => {
-      secondOpenFrame = null;
-      els.card.classList.add("show");
-      const layout = captureGlassSurfaces();
-      if (nativeReveal) {
-        invoke("reveal_flyout", { generation, ...layout }).catch((error) => {
-          if (generation === flyoutGeneration && !closeRequested) {
-            appearanceStatus = `${t("appearanceError")}: ${error}`;
-            showConfigStatus(appearanceStatus);
-          }
-        });
-      }
+  const start = () => {
+    if (generation !== flyoutGeneration || closeRequested) return;
+    // 双 rAF：先让“隐藏态”绘制一帧，再触发过渡，避免直接闪现
+    firstOpenFrame = requestAnimationFrame(() => {
+      firstOpenFrame = null;
+      secondOpenFrame = requestAnimationFrame(() => {
+        secondOpenFrame = null;
+        els.card.classList.add("show");
+        const layout = captureGlassSurfaces();
+        if (nativeReveal) {
+          invoke("reveal_flyout", { generation, ...layout }).catch((error) => {
+            if (generation === flyoutGeneration && !closeRequested) {
+              appearanceStatus = `${t("appearanceError")}: ${error}`;
+              showConfigStatus(appearanceStatus);
+            }
+          });
+        }
+      });
     });
-  });
+  };
+  const backdrop = prepareStaticBackdrop(generation);
+  if (backdrop) backdrop.then(start);
+  else start();
 }
 
 // 卡片向下滑出（收起），动画结束后再真正隐藏窗口——这样能看到下滑过程
@@ -1372,7 +1444,12 @@ function slideOutThenHide(generation) {
   els.card.classList.remove("show");
   hideTimer = setTimeout(() => {
     hideTimer = null;
-    invoke("commit_hide", { generation }).catch((e) => {
+    invoke("commit_hide", { generation }).then(() => {
+      if (generation === flyoutGeneration && closeRequested) {
+        staticBackdropId = null;
+        releaseStaticBackdrop();
+      }
+    }).catch((e) => {
       if (generation === flyoutGeneration) els.status.textContent = String(e);
     });
   }, CLOSE_MS + 40);
@@ -1542,6 +1619,7 @@ function applyAppearance(value) {
   els.cfgAppearance.value = currentAppearance;
   document.documentElement.setAttribute("data-appearance", currentAppearance);
   if (currentAppearance !== "liquid_glass") {
+    releaseStaticBackdrop();
     els.card.style.removeProperty("--glass-background-mask");
     glassLayoutSignature = "";
     clearGlassBackgroundMask();
@@ -1703,6 +1781,7 @@ async function changeAppearance() {
   if (appearanceStatus && els.cfgStatus.textContent === appearanceStatus) showConfigStatus("");
   appearanceStatus = "";
   const nativeUpdate = syncWindowAppearance(revision);
+  const backdropUpdate = prepareStaticBackdrop(flyoutGeneration);
   try {
     await queueConfigWrite("save_appearance", { appearance: currentAppearance });
   } catch (error) {
@@ -1712,6 +1791,7 @@ async function changeAppearance() {
     }
   }
   await nativeUpdate;
+  await backdropUpdate;
 }
 
 // 语言切换后，把当前选择持久化，方便下次启动恢复
@@ -1817,6 +1897,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       const page = typeof payload === "string" ? payload : payload?.page;
       const origin = typeof payload === "string" ? "bottom" : payload?.origin;
       flyoutGeneration = payload?.generation ?? flyoutGeneration;
+      staticBackdropId = Number.isInteger(payload?.staticBackdropId)
+        && payload.staticBackdropId >= 0 && payload.staticBackdropId <= 0xffffffff
+        ? payload.staticBackdropId : null;
       applyNativeReveal(payload?.nativeReveal);
       if (payload?.appearanceError) {
         appearanceStatus = `${t("appearanceError")}: ${payload.appearanceError}`;
@@ -1828,6 +1911,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     listen("flyout-hide", (e) => slideOutThenHide(e.payload?.generation)),
     listen("history-updated", (e) => onHistoryUpdated(e.payload)),
   ]);
+
+  window.addEventListener("pagehide", () => {
+    closeRequested = true;
+    cancelSlideInFrames();
+    staticBackdropId = null;
+    releaseStaticBackdrop();
+  });
 
   els.translateBtn.addEventListener("click", doTranslate);
   els.pasteInput.addEventListener("click", pasteInput);

@@ -3145,6 +3145,7 @@ name = "simplet"
 version = "2.1.0"
 dependencies = [
  "block2",
+ "image",
  "objc2",
  "objc2-app-kit",
  "objc2-core-graphics",
@@ -3160,6 +3161,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tempfile",
  "window-vibrancy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

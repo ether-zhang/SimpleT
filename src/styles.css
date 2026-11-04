@@ -920,6 +920,53 @@ body {
   color: var(--muted);
   opacity: 1;
 }
+/* Without a native backdrop, keep all glass pixels inside the animated card.
+   Gradients also serve as the fallback if static desktop sampling is unavailable. */
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] {
+  --glass-menu: rgba(248, 249, 255, 0.98);
+  --glass-field-fill: radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.55), transparent 72%),
+    linear-gradient(155deg, rgba(252, 254, 255, 0.69), rgba(232, 241, 252, 0.60));
+  --glass-field-relief: inset 0 1px 1px rgba(255, 255, 255, 0.92),
+    inset 0 -8px 20px rgba(166, 182, 208, 0.15), 0 1px 3px rgba(64, 86, 117, 0.07);
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] .card {
+  background: radial-gradient(ellipse at 6% 0%, rgba(255, 255, 255, 0.80), transparent 64%),
+    radial-gradient(ellipse at 100% 100%, rgba(172, 197, 232, 0.22), transparent 68%),
+    linear-gradient(145deg, rgba(242, 246, 252, 0.91), rgba(226, 235, 247, 0.87));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] :is(.pane, :where(#page-settings) input) {
+  /* A local relief value also preserves the existing focus-ring composition. */
+  --glass-relief: var(--glass-field-relief);
+  background: var(--glass-field-fill);
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] .quick-actions {
+  --fg: #4c5e78;
+  --muted: #5e7089;
+  --border: rgba(125, 144, 170, 0.20);
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] .card::before {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"] .language-menu {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* The PNG is opaque and already blurred in memory: sharp desktop pixels cannot
+   bleed through, and the normal card clip animates the whole surface together. */
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"][data-static-backdrop="true"] {
+  --static-backdrop-tint: rgba(242, 246, 253, 0.64);
+  --glass-field-fill: radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.36), transparent 72%),
+    linear-gradient(155deg, rgba(252, 254, 255, 0.40), rgba(232, 241, 252, 0.26));
+}
+:root[data-appearance="liquid_glass"][data-native-backdrop="false"][data-static-backdrop="true"] .card {
+  background: linear-gradient(var(--static-backdrop-tint), var(--static-backdrop-tint)),
+    var(--static-backdrop-image);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
 @media (prefers-color-scheme: dark) {
   :root[data-appearance="liquid_glass"] {
     --fg: #f4f4fa;
@@ -939,17 +986,42 @@ body {
     --glass-menu: rgba(68, 68, 91, 0.84);
     --glass-focus: rgba(127, 172, 255, 0.56);
   }
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"] {
+    --glass-menu: rgba(49, 53, 70, 0.98);
+    --glass-field-fill: radial-gradient(ellipse at 18% 0%, rgba(225, 234, 255, 0.08), transparent 72%),
+      linear-gradient(155deg, rgba(80, 91, 116, 0.50), rgba(48, 57, 79, 0.67));
+    --glass-field-relief: inset 0 1px 1px rgba(224, 232, 255, 0.14),
+      inset 0 -8px 20px rgba(7, 11, 23, 0.18), 0 1px 3px rgba(5, 9, 20, 0.14);
+  }
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"] .card {
+    background: radial-gradient(ellipse at 6% 0%, rgba(110, 129, 169, 0.20), transparent 64%),
+      radial-gradient(ellipse at 100% 100%, rgba(16, 32, 61, 0.28), transparent 68%),
+      linear-gradient(145deg, rgba(43, 49, 66, 0.95), rgba(27, 32, 46, 0.92));
+  }
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"] .quick-actions {
+    --fg: #dbe5f7;
+    --muted: #cad6eb;
+    --border: rgba(210, 222, 242, 0.17);
+  }
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"][data-static-backdrop="true"] {
+    --static-backdrop-tint: rgba(27, 32, 46, 0.80);
+    --glass-field-fill: radial-gradient(ellipse at 18% 0%, rgba(225, 234, 255, 0.07), transparent 72%),
+      linear-gradient(155deg, rgba(80, 91, 116, 0.30), rgba(48, 57, 79, 0.40));
+  }
 }
 @media (prefers-reduced-transparency: reduce) {
   :root[data-appearance="liquid_glass"] .card::before {
     display: none;
   }
-  :root[data-appearance="liquid_glass"] .card {
+  :root[data-appearance="liquid_glass"] .card,
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"] .card,
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"][data-static-backdrop="true"] .card {
     background: Canvas;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
   :root[data-appearance="liquid_glass"] :is(.pane, .lang-select, .swap, .secondary, #open-history, .page-back, .close-flyout, .history-entry, :where(#page-settings) input, .language-menu),
+  :root[data-appearance="liquid_glass"][data-native-backdrop="false"] :is(.pane, :where(#page-settings) input),
   :root[data-appearance="liquid_glass"] :is(#lang-a, #lang-b):hover {
     background: Canvas;
     -webkit-backdrop-filter: none;

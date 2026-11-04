@@ -195,9 +195,9 @@ Also check opening Settings immediately after launch, repeated tray clicks durin
 
 ## Configuration / 配置
 
-Settings includes an Appearance menu with Default and Liquid Glass. Changing appearance saves only this preference, so unfinished API or model edits remain drafts. macOS uses AppKit views and native glass materials. Windows retains its existing Tauri appearance. Default restores the opaque appearance.
+Settings includes an Appearance menu with Default and Liquid Glass. Changing appearance saves only this preference, so unfinished API or model edits remain drafts. macOS uses AppKit views and native glass materials. Windows uses static frost: before each hidden flyout opens, it samples only the desktop rectangle behind the card, downsizes it to at most 256 pixels per side, and blurs it in memory. The image stays fixed while visible, is never saved or uploaded, and is released when hidden. Sampling failures use the tinted CSS fallback. The background and contents share one CSS clip animation; Windows does not install whole-window Acrylic. Default restores the opaque appearance.
 
-设置中的“外观”提供“默认”和“液态玻璃”。切换会立即应用并单独保存，不会连带保存尚未完成的 API 或模型配置。macOS 使用 AppKit 原生视图和玻璃材质；Windows 保持现有 Tauri 外观。切回默认恢复实色界面。
+设置中的“外观”提供“默认”和“液态玻璃”。切换会立即应用并单独保存，不会连带保存尚未完成的 API 或模型配置。macOS 使用 AppKit 原生视图和玻璃材质；Windows 使用静态磨砂：每次从隐藏状态打开前，只取样卡片覆盖的桌面区域，缩小到每边最多 256 像素并在内存中模糊；显示期间不刷新，不保存或上传，隐藏后释放。取样失败时使用渐变底色。背景与内容随同一卡片动画裁切，Windows 不再启用整窗 Acrylic。切回默认恢复实色界面。
 
 Successful translations are saved automatically to `history.json` in the application's local data directory. Use the history button below Settings to browse the original text, translation, languages, and time. History is loaded in batches as you scroll upward and is retained across restarts. Failed requests are not recorded. An unreadable history file is preserved and reported in the history page.
 
