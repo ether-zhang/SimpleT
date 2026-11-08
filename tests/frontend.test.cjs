@@ -1628,7 +1628,8 @@ for (const [error, message] of [
     fail = false;
     await app.element("#cfg-model-retry").dispatch("click");
     assert.equal(app.element("#cfg-model").disabled, false);
-    assert.equal(app.element("#cfg-model-retry").hidden, true);
+    assert.equal(app.element("#cfg-model-retry").hidden, false);
+    assert.equal(app.element("#cfg-model-retry").disabled, false);
   });
 }
 
@@ -2097,4 +2098,35 @@ test("expanded history rows keep their state when older records arrive", async (
   assert.equal(app.element("#history-list").children[1], row);
   assert.equal(row.classList.contains("expanded"), true);
   assert.equal(row.children[2].getAttribute("aria-label"), "收起");
+});
+
+test("the model refresh remains available after success and refreshes once without saving drafts", async () => {
+  const loading = deferred();
+  let requests = 0;
+  const app = await createApp({ ui_lang: "en" }, { invoke: {
+    list_models: () => ++requests === 1 ? ["test-model", "old/model"] : loading.promise,
+  } });
+  const refresh = app.element("#cfg-model-retry");
+  app.element("#input").value = "unsent translation";
+  app.element("#cfg-key").value = "unsaved draft";
+  assert.equal(refresh.hidden, false);
+  assert.equal(refresh.disabled, false);
+  assert.equal(refresh.textContent, "Refresh");
+  assert.equal(refresh.getAttribute("aria-label"), "Refresh models");
+  const pending = refresh.dispatch("click");
+  assert.equal(refresh.disabled, true);
+  assert.equal(refresh.getAttribute("aria-busy"), "true");
+  refresh.dispatch("click");
+  assert.equal(requests, 2);
+  loading.resolve(["test-model", "new/model"]);
+  await pending;
+  assert.equal(refresh.disabled, false);
+  assert.equal(refresh.hidden, false);
+  assert.equal(app.element("#cfg-model").value, "test-model");
+  app.element("#cfg-model").dispatch("click");
+  modelProviderOption(app, "new").dispatch("click");
+  assert.deepEqual(visibleModelIds(app), ["new/model"]);
+  assert.equal(app.element("#cfg-key").value, "unsaved draft");
+  assert.equal(app.element("#input").value, "unsent translation");
+  assert.equal(app.commands.some(call => call.command === "save_config"), false);
 });

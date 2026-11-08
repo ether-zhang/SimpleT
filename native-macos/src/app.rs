@@ -269,6 +269,7 @@ struct Ui {
     history_version: u64,
     catalog: Catalog,
     catalog_ready: bool,
+    model_loading: bool,
     model_version: u64,
     popup: Option<PopupView>,
     key_changed: bool,
@@ -478,14 +479,7 @@ impl Ui {
             Style::Secondary,
             0,
         );
-        add(
-            &pages[2],
-            56,
-            "",
-            rect(672.0, 116.0, 56.0, 20.0),
-            Style::Icon,
-            0,
-        );
+
         let input_surface = View::new(rect(16.0, 64.0, pane_width, 391.0), mtm);
         let input_scroll = widgets::scroll(rect(0.0, 0.0, pane_width, 391.0), mtm);
         let input = TextView::new(rect(0.0, 0.0, pane_width, 391.0), true, mtm);
@@ -538,13 +532,13 @@ impl Ui {
             pages[2].addSubview(&label);
             labels.push((label, key));
         }
-        let url_surface = View::new(rect(16.0, 80.0, 712.0, 34.0), mtm);
+        let url_surface = View::new(rect(16.0, 80.0, 612.0, 36.0), mtm);
         let key_surface = View::new(rect(16.0, 164.0, 612.0, 36.0), mtm);
         url_surface.ivars().field_wrapper.set(true);
         key_surface.ivars().field_wrapper.set(true);
         pages[2].addSubview(&url_surface);
         pages[2].addSubview(&key_surface);
-        let url = NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(11.0, 6.5, 690.0, 21.0));
+        let url = NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(11.0, 7.5, 590.0, 21.0));
         url.setTag(101);
         url.setStringValue(&NSString::from_str(&saved.base_url));
         url.setPlaceholderString(Some(ns_string!("https://api.openai.com/v1")));
@@ -563,6 +557,14 @@ impl Ui {
             }
         }
         url_surface.addSubview(&url);
+        add(
+            &pages[2],
+            56,
+            "",
+            rect(640.0, 80.0, 88.0, 36.0),
+            Style::Secondary,
+            0,
+        );
         key_surface.addSubview(&key);
         let model_status = widgets::label("", rect(16.0, 116.0, 650.0, 20.0), 11.0, mtm);
         pages[2].addSubview(&model_status);
@@ -625,6 +627,7 @@ impl Ui {
             history_version: 0,
             catalog: Catalog::default(),
             catalog_ready: false,
+            model_loading: false,
             model_version: 0,
             popup: None,
             key_changed: false,
@@ -705,7 +708,7 @@ impl Ui {
             (41, "historyMore"),
             (54, "save"),
             (55, "clearKey"),
-            (56, "retry"),
+            (56, "refresh"),
         ] {
             self.set_button(id, &self.t(key));
         }
@@ -752,6 +755,7 @@ impl Ui {
             (31, "clearInput"),
             (32, "copyOutput"),
             (33, "clearOutput"),
+            (56, "refreshModels"),
         ] {
             self.buttons[&id].setToolTip(Some(&NSString::from_str(&self.t(key))));
         }
@@ -764,6 +768,11 @@ impl Ui {
         self.buttons[&32].setEnabled(!self.session.output.is_empty());
         self.buttons[&33].setEnabled(!self.session.output.is_empty());
         self.buttons[&51].setEnabled(self.catalog_ready);
+        self.buttons[&56].setEnabled(
+            !self.model_loading
+                && simplet_core::models::normalize_base_url(&self.url.stringValue().to_string())
+                    .is_ok(),
+        );
         self.buttons[&54].setEnabled(!self.saving);
         self.key.setPlaceholderString(Some(&NSString::from_str(
             if !self.key_changed && !self.saved.api_key.is_empty() && self.same_endpoint() {
@@ -837,7 +846,7 @@ impl Ui {
         for view in [&self.input, &self.output] {
             view.setTextColor(Some(&widgets::foreground(view, false)));
         }
-        widgets::surface(&self.url_surface, if glass { 17.0 } else { 8.0 }, false);
+        widgets::surface(&self.url_surface, if glass { 18.0 } else { 8.0 }, false);
         widgets::surface(&self.key_surface, if glass { 18.0 } else { 8.0 }, false);
         for button in self.buttons.values() {
             button.updateTrackingAreas();
@@ -1303,11 +1312,12 @@ impl Ui {
     }
 
     fn refresh_models(&mut self, delay: u64) {
+        self.close_popup();
+        self.model_loading = true;
         self.model_version = self.model_version.wrapping_add(1);
         self.catalog_ready = false;
         self.model_status
             .setStringValue(&NSString::from_str(&self.t("modelsLoading")));
-        self.buttons[&56].setHidden(true);
         self.refresh_actions();
         after(
             Duration::from_millis(delay),
@@ -1595,7 +1605,11 @@ impl Ui {
                     self.refresh_models(450);
                     self.refresh_actions();
                 }
-                56 => self.refresh_models(0),
+                56 => {
+                    if !self.model_loading {
+                        self.refresh_models(0);
+                    }
+                }
                 90 => {
                     self.show(Page::Translate, None);
                     if self.model_version == 0 {
@@ -1759,6 +1773,7 @@ impl Ui {
                 if version != self.model_version {
                     return;
                 }
+                self.model_loading = false;
                 match result {
                     Ok(models) => {
                         let count = models.len();
@@ -1772,7 +1787,6 @@ impl Ui {
                         self.model_status.setStringValue(&NSString::from_str(
                             &self.t("modelsReady").replace("{count}", &count.to_string()),
                         ));
-                        self.buttons[&56].setHidden(true);
                     }
                     Err(error) => {
                         let key = match error {
@@ -1786,7 +1800,6 @@ impl Ui {
                         self.model_status
                             .setStringValue(&NSString::from_str(&self.t(key)));
                         self.catalog_ready = false;
-                        self.buttons[&56].setHidden(false);
                     }
                 }
                 self.localize();

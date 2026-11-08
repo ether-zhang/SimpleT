@@ -452,7 +452,8 @@ body {
 .translate-btn:hover {
   filter: brightness(1.08);
 }
-.translate-btn:disabled {
+.translate-btn:disabled,
+.secondary:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -799,7 +800,7 @@ body {
   font-size: 15px;
   cursor: pointer;
 }
-.secondary:hover {
+.secondary:hover:not(:disabled) {
   border-color: var(--accent);
 }
 

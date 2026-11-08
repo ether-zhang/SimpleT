@@ -40,6 +40,8 @@ const I18N = {
     retry: "重试",
     historyExpand: "展开",
     historyCollapse: "收起",
+    refreshModels: "刷新模型列表",
+    refresh: "刷新",
     sourceLanguage: "源语言",
     targetLanguage: "目标语言",
     pasteInput: "追加粘贴",
@@ -100,6 +102,8 @@ const I18N = {
     retry: "Retry",
     historyExpand: "Show more",
     historyCollapse: "Show less",
+    refreshModels: "Refresh models",
+    refresh: "Refresh",
     sourceLanguage: "Source language",
     targetLanguage: "Target language",
     pasteInput: "Paste at end",
@@ -160,6 +164,8 @@ const I18N = {
     retry: "再試行",
     historyExpand: "もっと見る",
     historyCollapse: "折りたたむ",
+    refreshModels: "モデル一覧を更新",
+    refresh: "更新",
     sourceLanguage: "翻訳元の言語",
     targetLanguage: "翻訳先の言語",
     pasteInput: "末尾に貼り付け",
@@ -220,6 +226,8 @@ const I18N = {
     retry: "다시 시도",
     historyExpand: "더 보기",
     historyCollapse: "접기",
+    refreshModels: "모델 목록 새로고침",
+    refresh: "새로고침",
     sourceLanguage: "원본 언어",
     targetLanguage: "대상 언어",
     pasteInput: "끝에 붙여넣기",
@@ -280,6 +288,8 @@ const I18N = {
     retry: "Réessayer",
     historyExpand: "Développer",
     historyCollapse: "Réduire",
+    refreshModels: "Actualiser les modèles",
+    refresh: "Actualiser",
     sourceLanguage: "Langue source",
     targetLanguage: "Langue cible",
     pasteInput: "Coller à la fin",
@@ -340,6 +350,8 @@ const I18N = {
     retry: "Erneut versuchen",
     historyExpand: "Mehr anzeigen",
     historyCollapse: "Weniger anzeigen",
+    refreshModels: "Modelle aktualisieren",
+    refresh: "Neu laden",
     sourceLanguage: "Ausgangssprache",
     targetLanguage: "Zielsprache",
     pasteInput: "Am Ende einfügen",
@@ -400,6 +412,8 @@ const I18N = {
     retry: "Reintentar",
     historyExpand: "Ver más",
     historyCollapse: "Ver menos",
+    refreshModels: "Actualizar modelos",
+    refresh: "Actualizar",
     sourceLanguage: "Idioma de origen",
     targetLanguage: "Idioma de destino",
     pasteInput: "Pegar al final",
@@ -460,6 +474,8 @@ const I18N = {
     retry: "Повторить",
     historyExpand: "Развернуть",
     historyCollapse: "Свернуть",
+    refreshModels: "Обновить модели",
+    refresh: "Обновить",
     sourceLanguage: "Исходный язык",
     targetLanguage: "Язык перевода",
     pasteInput: "Вставить в конец",
@@ -923,8 +939,11 @@ function updateModelCatalogUI() {
     .replace("{status}", modelCatalogError?.status || "");
   els.modelStatus.title = els.modelStatus.textContent;
   els.modelStatus.setAttribute("data-state", modelCatalogState);
-  els.modelRetry.textContent = t("retry");
-  els.modelRetry.hidden = modelCatalogState !== "error" || code === "invalid_url";
+  els.modelRetry.textContent = t("refresh");
+  els.modelRetry.title = t("refreshModels");
+  els.modelRetry.setAttribute("aria-label", t("refreshModels"));
+  els.modelRetry.disabled = modelCatalogState === "loading" || !normalizeModelUrl(els.cfgUrl.value);
+  els.modelRetry.setAttribute("aria-busy", String(modelCatalogState === "loading"));
   els.cfgUrl.setAttribute("aria-invalid", String(code === "invalid_url"));
   modelPicker.trigger.disabled = modelCatalogState !== "ready";
   modelPicker.trigger.setAttribute("aria-busy", String(modelCatalogState === "loading"));
@@ -2000,7 +2019,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (modelFetchTimer !== null) return refreshModelCatalog(0);
     });
   }
-  els.modelRetry.addEventListener("click", () => refreshModelCatalog(0));
+  els.modelRetry.addEventListener("click", () => {
+    if (!els.modelRetry.disabled) return refreshModelCatalog(0);
+  });
   els.cfgKey.addEventListener("input", () => {
     apiKeyChanged = true;
     apiKeyRevision++;

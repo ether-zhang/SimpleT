@@ -108,10 +108,12 @@
       </header>
       <div class="settings-field">
         <label id="lbl-url" for="cfg-url">模型 URL（OpenAI 格式，以 /v1 结尾）</label>
-        <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1" aria-describedby="cfg-model-status" />
+        <div class="key-row">
+          <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1" aria-describedby="cfg-model-status" />
+          <button id="cfg-model-retry" class="secondary small" type="button" title="刷新模型列表" aria-label="刷新模型列表" aria-controls="cfg-model-options">刷新</button>
+        </div>
         <div class="connection-feedback">
           <span id="cfg-model-status" role="status" aria-live="polite"></span>
-          <button id="cfg-model-retry" class="history-link" type="button" hidden>重试</button>
         </div>
       </div>
       <label>
