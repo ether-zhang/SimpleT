@@ -676,9 +676,9 @@ define_class!(
             if self.ivars().icon.get() == 7 {
                 text("⇄",bounds,18.0,&foreground,FontWeight::Regular,NSTextAlignment::Center);
             } else if self.ivars().icon.get() > 0 {
-                draw_icon(self.ivars().icon.get(), rect((width - 16.0) / 2.0, (height - 16.0) / 2.0, 16.0, 16.0), &foreground);
+                draw_icon(self.ivars().icon.get(), rect((width - 16.0) / 2.0, (height - 16.0) / 2.0, 16.0, 16.0), &foreground, if (30..=33).contains(&self.tag()) { Some(opacity) } else { None });
             } else if style == Style::Close {
-                draw_icon(1, rect((width - 10.0) / 2.0, (height - 10.0) / 2.0, 10.0, 10.0), &foreground);
+                draw_icon(1, rect((width - 10.0) / 2.0, (height - 10.0) / 2.0, 10.0, 10.0), &foreground, None);
             } else {
                 let title = self.title().to_string();
                 let hint = self.ivars().hint.borrow();
@@ -692,7 +692,7 @@ define_class!(
                     text(&title, rect(4.0, top, width - 8.0, 18.0), 15.0, &foreground, FontWeight::Semibold, NSTextAlignment::Center);
                     text(&hint, rect(2.0, top + 21.0, width - 4.0, 14.0), 11.0, &foreground.colorWithAlphaComponent(0.72), FontWeight::Regular, NSTextAlignment::Center);
                 }
-                if style == Style::Language { draw_icon(8, rect(width - 23.0, (height - 12.0) / 2.0, 12.0, 12.0), &foreground.colorWithAlphaComponent(0.75)); }
+                if style == Style::Language { draw_icon(8, rect(width - 23.0, (height - 12.0) / 2.0, 12.0, 12.0), &foreground.colorWithAlphaComponent(0.75), None); }
             }
         }
     }
@@ -788,7 +788,7 @@ fn stroke(points: &[(f64, f64)], bounds: NSRect, path: &NSBezierPath) {
     }
 }
 
-pub fn draw_icon(kind: u8, bounds: NSRect, foreground: &NSColor) {
+pub fn draw_icon(kind: u8, bounds: NSRect, foreground: &NSColor, contrast: Option<f64>) {
     let path = NSBezierPath::bezierPath();
     path.setLineWidth(if kind == 1 {
         bounds.size.width / 8.0
@@ -884,7 +884,20 @@ pub fn draw_icon(kind: u8, bounds: NSRect, foreground: &NSColor) {
         9 => stroke(&[(4.0, 12.0), (10.0, 18.0), (21.0, 5.0)], bounds, &path),
         _ => {}
     }
-    foreground.setStroke();
+    if let Some(alpha) = contrast {
+        // Two fixed strokes, with no backdrop reads or extra compositing layer.
+        path.setLineWidth(4.25 * bounds.size.width / 24.0);
+        color(32.0 / 255.0, 38.0 / 255.0, 49.0 / 255.0, alpha).setStroke();
+        path.stroke();
+        path.setLineWidth(2.25 * bounds.size.width / 24.0);
+        if kind == 9 {
+            color(155.0 / 255.0, 212.0 / 255.0, 1.0, alpha).setStroke();
+        } else {
+            color(247.0 / 255.0, 249.0 / 255.0, 1.0, alpha).setStroke();
+        }
+    } else {
+        foreground.setStroke();
+    }
     path.stroke();
 }
 

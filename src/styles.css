@@ -358,6 +358,12 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Two static strokes remain visible on both light and dark desktop colors.
+   No filters, backdrop sampling, extra layers or color-monitoring loop. */
+.quick-actions .icon-rim { stroke: #202631; stroke-width: 4.25; }
+.quick-actions .icon-ink { stroke: #f7f9ff; stroke-width: 2.25; }
+.quick-actions .copied .icon-ink { stroke: #9bd4ff; }
+
 .icon-button:hover:not(:disabled) {
   background: var(--border);
   color: var(--fg);
