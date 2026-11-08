@@ -575,6 +575,7 @@ pub enum Style {
     Language,
     Close,
     Icon,
+    InlineIcon,
     Back,
     Row,
 }
@@ -640,12 +641,17 @@ define_class!(
             let radius = match style {
                 Style::Close => height / 2.0,
                 Style::Primary => if glass {22.0} else {10.0},
+                Style::InlineIcon => height / 2.0,
                 Style::Icon | Style::Row => 6.0,
                 Style::Back => if glass { height / 2.0 } else { 6.0 },
                 _ => if glass { height / 2.0 } else {8.0},
             };
-            let foreground = if style == Style::Primary || (style == Style::Icon && glass) { NSColor::whiteColor() } else { foreground(self,false) };
-            if style == Style::Icon {
+            let foreground = if style == Style::Primary || (style == Style::Icon && glass) { NSColor::whiteColor() } else { foreground(self,style == Style::InlineIcon && !hover) };
+            if style == Style::InlineIcon {
+                let shape = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(),radius,radius);
+                color(0.5, 0.5, 0.5, if self.isHighlighted() { 0.16 } else if hover { 0.10 } else { 0.0 }).setFill();
+                shape.fill();
+            } else if style == Style::Icon {
                 let shape = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(),radius,radius);
                 color(1.0, 1.0, 1.0, if hover { if glass {0.16} else {0.7} } else {0.0}).setFill();
                 shape.fill();
@@ -676,7 +682,8 @@ define_class!(
             if self.ivars().icon.get() == 7 {
                 text("⇄",bounds,18.0,&foreground,FontWeight::Regular,NSTextAlignment::Center);
             } else if self.ivars().icon.get() > 0 {
-                draw_icon(self.ivars().icon.get(), rect((width - 16.0) / 2.0, (height - 16.0) / 2.0, 16.0, 16.0), &foreground, if (30..=33).contains(&self.tag()) { Some(opacity) } else { None });
+                let size = if matches!(self.ivars().icon.get(),8|11) {12.0} else {16.0};
+                draw_icon(self.ivars().icon.get(), rect((width - size) / 2.0, (height - size) / 2.0, size, size), &foreground, if style == Style::Icon && (30..=33).contains(&self.tag()) { Some(opacity) } else { None });
             } else if style == Style::Close {
                 draw_icon(1, rect((width - 10.0) / 2.0, (height - 10.0) / 2.0, 10.0, 10.0), &foreground, None);
             } else {
@@ -736,7 +743,10 @@ impl Button {
             self,
             radius,
             style == Style::Primary,
-            !matches!(style, Style::Icon | Style::Row | Style::Close),
+            !matches!(
+                style,
+                Style::Icon | Style::InlineIcon | Style::Row | Style::Close
+            ),
         );
         NSView::setNeedsDisplay(self, true);
     }
@@ -882,6 +892,7 @@ pub fn draw_icon(kind: u8, bounds: NSRect, foreground: &NSColor, contrast: Optio
         }
         8 => stroke(&[(4.0, 8.0), (12.0, 16.0), (20.0, 8.0)], bounds, &path),
         9 => stroke(&[(4.0, 12.0), (10.0, 18.0), (21.0, 5.0)], bounds, &path),
+        11 => stroke(&[(4.0, 16.0), (12.0, 8.0), (20.0, 16.0)], bounds, &path),
         _ => {}
     }
     if let Some(alpha) = contrast {

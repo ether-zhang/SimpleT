@@ -545,6 +545,28 @@ body {
   line-height: 1.6;
   user-select: text;
 }
+.history-entry:not(.expanded) .history-texts p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+.history-entry .history-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 22px;
+  margin: 6px auto -4px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.history-toggle svg { width: 12px; height: 12px; }
+.history-entry.expanded .history-toggle svg { transform: rotate(180deg); }
+.history-toggle[hidden] { display: none; }
 .history-texts p:first-child {
   padding-right: 16px;
 }

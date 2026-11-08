@@ -38,6 +38,8 @@ const I18N = {
     historyLoadError: "历史记录加载失败",
     historySaveError: "本次翻译未能保存到历史记录",
     retry: "重试",
+    historyExpand: "展开",
+    historyCollapse: "收起",
     sourceLanguage: "源语言",
     targetLanguage: "目标语言",
     pasteInput: "追加粘贴",
@@ -96,6 +98,8 @@ const I18N = {
     historyLoadError: "Unable to load history",
     historySaveError: "This translation could not be saved to history",
     retry: "Retry",
+    historyExpand: "Show more",
+    historyCollapse: "Show less",
     sourceLanguage: "Source language",
     targetLanguage: "Target language",
     pasteInput: "Paste at end",
@@ -154,6 +158,8 @@ const I18N = {
     historyLoadError: "履歴を読み込めません",
     historySaveError: "今回の翻訳を履歴に保存できませんでした",
     retry: "再試行",
+    historyExpand: "もっと見る",
+    historyCollapse: "折りたたむ",
     sourceLanguage: "翻訳元の言語",
     targetLanguage: "翻訳先の言語",
     pasteInput: "末尾に貼り付け",
@@ -212,6 +218,8 @@ const I18N = {
     historyLoadError: "기록을 불러올 수 없습니다",
     historySaveError: "이번 번역을 기록에 저장하지 못했습니다",
     retry: "다시 시도",
+    historyExpand: "더 보기",
+    historyCollapse: "접기",
     sourceLanguage: "원본 언어",
     targetLanguage: "대상 언어",
     pasteInput: "끝에 붙여넣기",
@@ -270,6 +278,8 @@ const I18N = {
     historyLoadError: "Impossible de charger l’historique",
     historySaveError: "Cette traduction n’a pas pu être enregistrée",
     retry: "Réessayer",
+    historyExpand: "Développer",
+    historyCollapse: "Réduire",
     sourceLanguage: "Langue source",
     targetLanguage: "Langue cible",
     pasteInput: "Coller à la fin",
@@ -328,6 +338,8 @@ const I18N = {
     historyLoadError: "Verlauf kann nicht geladen werden",
     historySaveError: "Diese Übersetzung konnte nicht gespeichert werden",
     retry: "Erneut versuchen",
+    historyExpand: "Mehr anzeigen",
+    historyCollapse: "Weniger anzeigen",
     sourceLanguage: "Ausgangssprache",
     targetLanguage: "Zielsprache",
     pasteInput: "Am Ende einfügen",
@@ -386,6 +398,8 @@ const I18N = {
     historyLoadError: "No se pudo cargar el historial",
     historySaveError: "No se pudo guardar esta traducción en el historial",
     retry: "Reintentar",
+    historyExpand: "Ver más",
+    historyCollapse: "Ver menos",
     sourceLanguage: "Idioma de origen",
     targetLanguage: "Idioma de destino",
     pasteInput: "Pegar al final",
@@ -444,6 +458,8 @@ const I18N = {
     historyLoadError: "Не удалось загрузить историю",
     historySaveError: "Не удалось сохранить этот перевод в истории",
     retry: "Повторить",
+    historyExpand: "Развернуть",
+    historyCollapse: "Свернуть",
     sourceLanguage: "Исходный язык",
     targetLanguage: "Язык перевода",
     pasteInput: "Вставить в конец",
@@ -1043,6 +1059,14 @@ function historyLanguage(value) {
   return language ? displayName(currentLang, language.code) : value;
 }
 
+function updateHistoryDisclosure(node) {
+  node.item.classList.toggle("expanded", node.expanded);
+  const label = t(node.expanded ? "historyCollapse" : "historyExpand");
+  node.toggle.title = label;
+  node.toggle.setAttribute("aria-label", label);
+  node.toggle.setAttribute("aria-expanded", String(node.expanded));
+}
+
 function renderHistoryEntries() {
   if (!historyEntries.length) {
     if (historyNodes.size) els.historyList.replaceChildren();
@@ -1082,7 +1106,30 @@ function renderHistoryEntries() {
       paragraphs.forEach(paragraph => texts.appendChild(paragraph));
       item.appendChild(meta);
       item.appendChild(texts);
-      node = { item, languages, time, paragraphs };
+      texts.id = `history-texts-${entry.id}`;
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "icon-button history-toggle";
+      const arrow = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      arrow.setAttribute("viewBox", "0 0 24 24");
+      arrow.setAttribute("aria-hidden", "true");
+      const chevron = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      chevron.setAttribute("d", "m4 8 8 8 8-8");
+      arrow.appendChild(chevron);
+      toggle.appendChild(arrow);
+      toggle.hidden = true;
+      toggle.setAttribute("aria-controls", texts.id);
+      item.appendChild(toggle);
+      node = { item, languages, time, paragraphs, toggle, expanded: false, needsMeasure: true };
+      const record = node;
+      toggle.addEventListener("click", () => {
+        const scrollTop = els.historyScroll.scrollTop;
+        const top = record.item.getBoundingClientRect().top - els.historyScroll.getBoundingClientRect().top;
+        record.expanded = !record.expanded;
+        updateHistoryDisclosure(record);
+        els.historyScroll.scrollTop = record.expanded ? scrollTop : Math.max(0, Math.min(scrollTop, scrollTop + top));
+        scheduleGlassSurfaces();
+      });
       historyNodes.set(entry.id, node);
     }
     if (node.entry !== entry || node.locale !== currentLang || node.dateFormat !== dateFormat) {
@@ -1093,18 +1140,33 @@ function renderHistoryEntries() {
       let index = 0;
       for (const [text, language] of [[entry.source_text, entry.lang_a], [entry.translation, entry.lang_b]]) {
         const paragraph = node.paragraphs[index++];
-        if (paragraph.textContent !== text) paragraph.textContent = text;
+        if (paragraph.textContent !== text) {
+          paragraph.textContent = text;
+          node.needsMeasure = true;
+        }
         paragraph.dir = "auto";
         paragraph.lang = LANGUAGES.find((lang) => lang.value === language)?.code || "";
       }
       node.entry = entry;
       node.locale = currentLang;
       node.dateFormat = dateFormat;
+      updateHistoryDisclosure(node);
     }
     // Leave existing nodes in place, preserving selection and avoiding a full
     // history-page repaint when an older page or one new translation arrives.
     if (node.item === cursor) cursor = cursor.nextElementSibling;
     else els.historyList.insertBefore(node.item, cursor);
+  }
+  // Measure only changed rows, after insertion. Batch reads before writes so
+  // wrapped lines are counted without a timer or continuous layout observer.
+  const measurements = [...historyNodes.values()].filter(node => node.needsMeasure).map(node => [node,
+    node.paragraphs.some(paragraph => paragraph.scrollHeight > (parseFloat(getComputedStyle(paragraph).lineHeight) || 22.4) * 5 + 1),
+  ]);
+  for (const [node, overflow] of measurements) {
+    node.needsMeasure = false;
+    node.toggle.hidden = !overflow;
+    if (!overflow) node.expanded = false;
+    updateHistoryDisclosure(node);
   }
 }
 

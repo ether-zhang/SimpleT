@@ -25,6 +25,8 @@ pub struct Row {
     pub result: String,
     pub height: f64,
     pub checked: bool,
+    pub expanded: bool,
+    pub toggle_title: String,
 }
 
 impl Row {
@@ -37,6 +39,8 @@ impl Row {
             result: String::new(),
             height: 28.0,
             checked,
+            expanded: false,
+            toggle_title: String::new(),
         }
     }
 }
@@ -153,6 +157,11 @@ define_class!(
     unsafe impl NSControlTextEditingDelegate for Source {}
 
     impl Source {
+        #[unsafe(method(historyToggle:))]
+        fn toggle_history(&self, button: &NSButton) {
+            if let Some(id) = self.ivars().rows.borrow().get(button.tag() as usize)
+                .and_then(|row| row.key.parse().ok()) { post(Action::HistoryToggle(id)); }
+        }
         #[unsafe(method(clicked:))]
         fn clicked(&self, table: &NSTableView) {
             post(Action::TableActivate(self.ivars().kind.get(), table.clickedRow()));
@@ -202,6 +211,11 @@ define_class!(
                     label.setSelectable(history);
                     cell.addSubview(&label);
                 }
+                if history {
+                    let toggle = widgets::Button::new(rect((width-28.0)/2.0, 0.0, 28.0, 22.0), "", index, widgets::Style::InlineIcon, self, self.mtm());
+                    unsafe { toggle.setAction(Some(objc2::sel!(historyToggle:))); }
+                    cell.addSubview(&toggle);
+                }
                 Retained::into_super(cell)
             });
             cell.setFrame(rect(0.0,0.0,width,row.height));
@@ -218,9 +232,26 @@ define_class!(
                 fields[1].setTextColor(Some(&NSColor::secondaryLabelColor()));
                 fields[1].setStringValue(&NSString::from_str(&row.trailing));
                 let column = (width-44.0)/2.0;
-                fields[2].setFrame(rect(16.0,42.0,column,row.height-56.0));
+                let has_toggle = !row.toggle_title.is_empty();
+                let body_height = row.height - 56.0 - if has_toggle { 28.0 } else { 0.0 };
+                for field in [&fields[2], &fields[3]] {
+                    field.setPreferredMaxLayoutWidth(column);
+                    field.setMaximumNumberOfLines(if row.expanded || !has_toggle { 0 } else { 5 });
+                }
+                for child in cell.subviews() {
+                    if let Ok(toggle) = child.downcast::<widgets::Button>() {
+                        toggle.setHidden(!has_toggle);
+                        toggle.setTag(index);
+                        toggle.setTitle(&NSString::from_str(&row.toggle_title));
+                        toggle.setToolTip(Some(&NSString::from_str(&row.toggle_title)));
+                        toggle.ivars().icon.set(if row.expanded { 11 } else { 8 });
+                        toggle.setFrame(rect((width-28.0)/2.0, row.height - 32.0, 28.0, 22.0));
+                        toggle.redraw();
+                    }
+                }
+                fields[2].setFrame(rect(16.0,42.0,column,body_height));
                 fields[2].setStringValue(&NSString::from_str(&row.source));
-                fields[3].setFrame(rect(28.0+column,42.0,column,row.height-56.0));
+                fields[3].setFrame(rect(28.0+column,42.0,column,body_height));
                 fields[3].setStringValue(&NSString::from_str(&row.result));
             } else {
                 let label = &fields[0];

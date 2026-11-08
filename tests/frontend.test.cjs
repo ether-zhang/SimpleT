@@ -43,6 +43,7 @@ async function createApp(config = {}, options = {}) {
     const listeners = new Map();
     const attributes = new Map();
     const styles = new Map();
+    let content = "";
     return {
       selector,
       get firstElementChild() { return this.children[0] || null; },
@@ -51,7 +52,12 @@ async function createApp(config = {}, options = {}) {
       },
       id: selector.startsWith("#") ? selector.slice(1) : "",
       children: [], hidden: false, scrollTop: 0, scrollHeight: 0, clientHeight: 400, offsetTop: 0,
-      value: "", textContent: "", disabled: false,
+      value: "", disabled: false,
+      get textContent() { return content; },
+      set textContent(value) {
+        content = value;
+        if (options.textHeights) this.scrollHeight = options.textHeights[value] || 0;
+      },
       style: {
         setProperty(name, value) { styles.set(name, value); },
         removeProperty(name) { styles.delete(name); },
@@ -179,7 +185,7 @@ async function createApp(config = {}, options = {}) {
     },
     getComputedStyle(element) {
       metrics.styleReads++;
-      return { borderTopLeftRadius: "18px", overflowX: "visible", overflowY: "visible", ...options.styles?.[element.selector] };
+      return { lineHeight: "22.4px", borderTopLeftRadius: "18px", overflowX: "visible", overflowY: "visible", ...options.styles?.[element.selector] };
     },
     MutationObserver: class {
       constructor(callback) { mutations.push(callback); }
@@ -1896,7 +1902,7 @@ test("paging history retains existing rows and creates only the newly loaded row
   assert.deepEqual(historyIds(app), [2, 3, 4, 5]);
   assert.equal(rows[2], previousRows[0]);
   assert.equal(rows[3], previousRows[1]);
-  assert.ok(app.metrics.createdNodes - nodesBefore <= 14, "only two new seven-node records are created");
+  assert.ok(app.metrics.createdNodes - nodesBefore <= 20, "only two new ten-node records are created");
   app.emit("history-updated", { entry: historyEntry(5, "updated literal <text>") });
   assert.equal(app.element("#history-list").children[3], previousRows[1]);
   assert.equal(previousRows[1].children[1].children[0].textContent, "updated literal <text>");
@@ -2047,4 +2053,48 @@ test("retained history rows follow system time-zone changes on subsequent render
   assert.equal(time.textContent, new Intl.DateTimeFormat("zh", {
     year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: zone,
   }).format(new Date(entry.created_at)));
+});
+
+test("history offers expansion only beyond five rendered lines and keeps complete text", async () => {
+  const five = "one\ntwo\nthree\nfour\nfive";
+  const wrapped = "A long unbroken paragraph that wraps across six rendered lines";
+  const app = await createApp({ ui_lang: "en" }, {
+    textHeights: { [five]: 112, [wrapped]: 134 },
+    invoke: { load_history: () => ({ entries: [historyEntry(1, five), historyEntry(2, wrapped)], has_more: false }) },
+  });
+  await app.element("#open-history").dispatch("click");
+  const [short, long] = app.element("#history-list").children;
+  assert.equal(short.children[2].hidden, true);
+  const toggle = long.children[2];
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.textContent, "");
+  assert.equal(toggle.children[0].getAttribute("aria-hidden"), "true");
+  assert.equal(toggle.getAttribute("aria-label"), "Show more");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  toggle.dispatch("click");
+  assert.equal(long.classList.contains("expanded"), true);
+  assert.equal(toggle.getAttribute("aria-label"), "Show less");
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(long.children[1].children[0].textContent, wrapped);
+  toggle.dispatch("click");
+  assert.equal(long.classList.contains("expanded"), false);
+  assert.equal(long.children[1].children[0].textContent, wrapped);
+});
+
+test("expanded history rows keep their state when older records arrive", async () => {
+  const longText = "six rendered lines";
+  const app = await createApp({}, {
+    textHeights: { [longText]: 134 },
+    invoke: { load_history: ({ before }) => ({
+      entries: before ? [historyEntry(4)] : [historyEntry(5, longText)], has_more: !before,
+    }) },
+  });
+  await app.element("#open-history").dispatch("click");
+  const row = app.element("#history-list").children[0];
+  row.children[2].dispatch("click");
+  await app.element("#history-more").dispatch("click");
+  assert.deepEqual(historyIds(app), [4, 5]);
+  assert.equal(app.element("#history-list").children[1], row);
+  assert.equal(row.classList.contains("expanded"), true);
+  assert.equal(row.children[2].getAttribute("aria-label"), "收起");
 });

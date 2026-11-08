@@ -29,7 +29,7 @@ use simplet_core::{
 };
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -76,6 +76,7 @@ pub enum Action {
         result: Result<HistoryPage, String>,
     },
     HistoryScrolled,
+    HistoryToggle(u64),
     Saved {
         version: u64,
         key_revision: u64,
@@ -262,6 +263,7 @@ struct Ui {
     history_status: Retained<NSTextField>,
     history: List,
     history_entries: Vec<HistoryEntry>,
+    history_expanded: BTreeSet<u64>,
     history_more: bool,
     history_loading: bool,
     history_version: u64,
@@ -617,6 +619,7 @@ impl Ui {
             history_status,
             history,
             history_entries: Vec::new(),
+            history_expanded: BTreeSet::new(),
             history_more: false,
             history_loading: false,
             history_version: 0,
@@ -905,6 +908,7 @@ impl Ui {
         self.close_popup();
         if self.session.page == Page::History && page != Page::History {
             self.history_entries.clear();
+            self.history_expanded.clear();
             self.history.replace(Vec::new());
             self.history_version = self.history_version.wrapping_add(1);
             self.history_loading = false;
@@ -1318,6 +1322,7 @@ impl Ui {
         if reset {
             self.history_version = self.history_version.wrapping_add(1);
             self.history_entries.clear();
+            self.history_expanded.clear();
             self.history.replace(Vec::new());
             self.history_more = false;
         }
@@ -1341,6 +1346,20 @@ impl Ui {
     fn render_history(&mut self, bottom: bool) {
         let width = self.history.table.bounds().size.width - 12.0;
         let column = (width - 44.0) / 2.0;
+        // Measure with the same font and wrapping rules as the displayed fields.
+        // This only runs when history content or its presentation changes.
+        let sizing = NSTextField::wrappingLabelWithString(ns_string!(""), self.mtm);
+        sizing.setFont(Some(&widgets::font(14.0, widgets::FontWeight::Regular)));
+        sizing.setPreferredMaxLayoutWidth(column);
+        let measure = |text: &str| {
+            sizing.setStringValue(&NSString::from_str(text));
+            sizing.setMaximumNumberOfLines(0);
+            let full = sizing.fittingSize().height.ceil();
+            // Measure the same text with the five-line limit, so fallback fonts
+            // and mixed scripts use their own actual line metrics.
+            sizing.setMaximumNumberOfLines(5);
+            (full, sizing.fittingSize().height.ceil())
+        };
         let formatter = NSDateFormatter::new();
         formatter.setLocale(Some(&NSLocale::initWithLocaleIdentifier(
             NSLocale::alloc(),
@@ -1352,23 +1371,18 @@ impl Ui {
             .history_entries
             .iter()
             .map(|entry| {
-                let lines = |text: &str| -> f64 {
-                    text.lines()
-                        .map(|line| {
-                            (line
-                                .chars()
-                                .map(|character| if character.is_ascii() { 7.5 } else { 15.0 })
-                                .sum::<f64>()
-                                / column)
-                                .ceil()
-                                .max(1.0)
-                        })
-                        .sum::<f64>()
-                        .max(1.0)
+                let (source_full, source_collapsed) = measure(&entry.source_text);
+                let (result_full, result_collapsed) = measure(&entry.translation);
+                let full_height = source_full.max(result_full);
+                let expandable =
+                    source_full > source_collapsed + 1.0 || result_full > result_collapsed + 1.0;
+                let expanded = expandable && self.history_expanded.contains(&entry.id);
+                let body_height = if expanded {
+                    full_height
+                } else {
+                    source_collapsed.max(result_collapsed)
                 };
-                let height = (lines(&entry.source_text).max(lines(&entry.translation)) * 22.5
-                    + 64.0)
-                    .max(112.0);
+                let height = (body_height + 64.0 + if expandable { 28.0 } else { 0.0 }).max(112.0);
                 Row {
                     key: entry.id.to_string(),
                     title: format!(
@@ -1385,6 +1399,16 @@ impl Ui {
                     result: entry.translation.clone(),
                     height,
                     checked: false,
+                    expanded,
+                    toggle_title: if expandable {
+                        self.t(if expanded {
+                            "historyCollapse"
+                        } else {
+                            "historyExpand"
+                        })
+                    } else {
+                        String::new()
+                    },
                 }
             })
             .collect();
@@ -1927,6 +1951,32 @@ impl Ui {
                         self.set_button(41, &self.t("retry"));
                     }
                 }
+                self.surfaces();
+            }
+            Action::HistoryToggle(id) => {
+                if self.session.page != Page::History {
+                    return;
+                }
+                let Some(index) = self.history_entries.iter().position(|entry| entry.id == id)
+                else {
+                    return;
+                };
+                let clip = self.history.scroll.contentView();
+                let old_y = clip.bounds().origin.y;
+                let row_y = self
+                    .history
+                    .table
+                    .frameOfCellAtColumn_row(0, index as isize)
+                    .origin
+                    .y;
+                if !self.history_expanded.remove(&id) {
+                    self.history_expanded.insert(id);
+                }
+                self.render_history(false);
+                let max_y =
+                    (self.history.table.bounds().size.height - clip.bounds().size.height).max(0.0);
+                clip.scrollToPoint(NSPoint::new(0.0, old_y.min(row_y).clamp(0.0, max_y)));
+                self.history.scroll.reflectScrolledClipView(&clip);
                 self.surfaces();
             }
             Action::HistoryScrolled => {
